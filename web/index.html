@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FolderSync</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, sans-serif; background: #f5f7fa; color: #17202b; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    main { max-width: 1200px; margin: 0 auto; padding: 28px 20px 40px; }
+    header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
+    h1 { font-size: 1.5rem; margin: 0 0 4px; }
+    h2 { font-size: 1.05rem; margin: 0; }
+    p { margin: 0; color: #657184; }
+    button { background: #2264d1; border: 0; border-radius: 8px; color: white; cursor: pointer; font: inherit; font-weight: 600; padding: 10px 17px; }
+    button:hover { background: #174fad; }
+    button:disabled { cursor: wait; opacity: .55; }
+    .status { color: #536174; font-size: .9rem; margin-top: 8px; min-height: 1.3em; }
+    .error { color: #b42318; }
+    .setup { margin-bottom: 20px; padding: 18px; }
+    .setup p { margin: 8px 0 16px; font-size: .9rem; }
+    .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    label { display: block; font-size: .9rem; font-weight: 600; }
+    input { width: 100%; margin: 6px 0; border: 1px solid #b8c4d3; border-radius: 6px; padding: 10px; font: inherit; }
+    .hint { display: block; color: #657184; font-size: .8rem; font-weight: 400; overflow-wrap: anywhere; }
+    .setup button { margin-top: 16px; }
+    @media (max-width: 760px) { .fields { grid-template-columns: 1fr; } }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .panel { background: white; border: 1px solid #dce2ea; border-radius: 10px; overflow: hidden; box-shadow: 0 2px 8px #162a4210; }
+    .panel-head { padding: 16px; border-bottom: 1px solid #e6eaf0; }
+    .panel-head p { font-size: .8rem; overflow-wrap: anywhere; margin-top: 5px; }
+    .count { font-size: .8rem; color: #657184; font-weight: 400; margin-left: 6px; }
+    .file-list { height: 380px; overflow: auto; }
+    .tree-actions { display: flex; gap: 8px; margin-top: 12px; }
+    .tree-actions button { padding: 5px 9px; background: #edf3fc; color: #24559f; font-size: .75rem; }
+    .tree-actions button:hover { background: #dce9fc; }
+    button:focus-visible, summary:focus-visible { outline: 2px solid #2264d1; outline-offset: -2px; }
+    .file-tree, .tree-children { list-style: none; margin: 0; padding: 0; }
+    .file-tree { padding: 8px 12px; font-size: .85rem; }
+    .tree-children { margin-left: 10px; padding-left: 12px; border-left: 1px solid #dce2ea; }
+    .tree-row { display: flex; align-items: flex-start; gap: 8px; padding: 9px 4px; border-bottom: 1px solid #edf0f4; line-height: 1.5; }
+    .tree-row:hover { background: #f5f8fc; }
+    summary.tree-row { cursor: pointer; list-style: none; }
+    summary.tree-row::-webkit-details-marker { display: none; }
+    .tree-arrow { width: 12px; flex: 0 0 12px; color: #657184; }
+    .tree-arrow::before { content: '▸'; }
+    details[open] > summary .tree-arrow::before { content: '▾'; }
+    .tree-icon { flex: 0 0 18px; color: #657184; }
+    .tree-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    summary .tree-name { font-weight: 600; }
+    .tree-meta { flex: 0 0 auto; color: #657184; font-size: .75rem; padding-top: 2px; white-space: nowrap; }
+    .empty { color: #657184; padding: 18px 16px; }
+    .logs { margin-top: 16px; }
+    .logs pre { background: #152238; color: #dbe7f7; height: 210px; margin: 0; overflow: auto; padding: 16px; font: .78rem/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+    @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } .file-list { height: 280px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>FolderSync</h1>
+        <p>Media hard-link sync</p>
+        <div id="status" class="status" role="status">Loading…</div>
+      </div>
+      <button id="sync-button" type="button">Sync now</button>
+    </header>
+    <section class="panel setup" aria-labelledby="setup-title">
+      <h2 id="setup-title">Choose your folders</h2>
+      <p>Enter existing subfolders inside <strong id="data-root">/app/data</strong>. FolderSync checks that they support hard links before saving.</p>
+      <form id="setup-form">
+        <div class="fields">
+          <label for="source-input">Source folder
+            <input id="source-input" name="source" placeholder="source" required autocomplete="off" spellcheck="false" aria-describedby="source-preview">
+            <span class="hint" id="source-preview">Example: /app/data/source</span>
+          </label>
+          <label for="destination-input">Destination folder
+            <input id="destination-input" name="destination" placeholder="destination" required autocomplete="off" spellcheck="false" aria-describedby="destination-preview">
+            <span class="hint" id="destination-preview">Example: /app/data/destination</span>
+          </label>
+        </div>
+        <button id="save-button" type="submit">Save folders</button>
+        <div id="setup-message" class="status" role="status" aria-live="polite">Save your folders to enable scanning.</div>
+      </form>
+    </section>
+    <div class="grid">
+      <section class="panel" aria-label="Torrent files">
+        <div class="panel-head"><h2>Torrent <span id="torrent-count" class="count"></span></h2><p id="torrent-path"></p></div>
+        <div id="torrent-files" class="file-list"></div>
+      </section>
+      <section class="panel" aria-label="Data files">
+        <div class="panel-head"><h2>Data <span id="data-count" class="count"></span></h2><p id="data-path"></p></div>
+        <div id="data-files" class="file-list"></div>
+      </section>
+    </div>
+    <section class="panel logs" aria-label="Recent logs">
+      <div class="panel-head"><h2>Recent logs</h2></div>
+      <pre id="logs">Loading…</pre>
+    </section>
+  </main>
+  <script>
+    const button = document.getElementById('sync-button');
+    const status = document.getElementById('status');
+    let requestRunning = false;
+    let setupRunning = false;
+    let setupLoaded = false;
+    let dataRoot = '/app/data';
+    const form = document.getElementById('setup-form');
+    const saveButton = document.getElementById('save-button');
+    const setupMessage = document.getElementById('setup-message');
+    const sourceInput = document.getElementById('source-input');
+    const destinationInput = document.getElementById('destination-input');
+    function updatePreviews() {
+      for (const [name, input] of [['source', sourceInput], ['destination', destinationInput]]) {
+        document.getElementById(name + '-preview').textContent = input.value ? `${dataRoot}/${input.value}` : 'Enter a subfolder path';
+      }
+    }
+    form.addEventListener('input', updatePreviews);
+
+    function fileSize(bytes) {
+      if (bytes < 1024) return `${bytes} B`;
+      const units = ['KB', 'MB', 'GB', 'TB'];
+      let size = bytes;
+      let unit = -1;
+      do { size /= 1024; unit++; } while (size >= 1024 && unit < units.length - 1);
+      return `${size.toFixed(1)} ${units[unit]}`;
+    }
+
+    const treeStates = new Map();
+    const nameOrder = new Intl.Collator(undefined, {numeric: true, sensitivity: 'base'});
+
+    function renderFiles(id, files) {
+      const container = document.getElementById(id + '-files');
+      const rootPath = document.getElementById(id + '-path').textContent;
+      let state = treeStates.get(id);
+      if (!state || state.rootPath !== rootPath) {
+        state = {rootPath, closed: new Set(), signature: null};
+        treeStates.set(id, state);
+      }
+      // Leave unchanged trees intact so polling preserves focus and scroll position.
+      const signature = JSON.stringify(files);
+      if (state.signature === signature) return;
+      state.signature = signature;
+      const scrollTop = container.scrollTop;
+      const focusedPath = container.contains(document.activeElement)
+        ? document.activeElement.dataset.path : null;
+      const root = {children: new Map(), count: 0};
+      for (const file of files) {
+        const parts = file.path.split('/');
+        let parent = root;
+        parent.count++;
+        parts.forEach((name, index) => {
+          if (!parent.children.has(name)) {
+            parent.children.set(name, {
+              name, path: parts.slice(0, index + 1).join('/'),
+              children: new Map(), count: 0, folder: index < parts.length - 1,
+              size: file.size
+            });
+          }
+          parent = parent.children.get(name);
+          parent.count++;
+        });
+      }
+      document.getElementById(id + '-count').textContent = `(${files.length} ${files.length === 1 ? 'file' : 'files'})`;
+      container.replaceChildren();
+      if (!files.length) {
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = 'No files found';
+        container.append(empty);
+        return;
+      }
+      function renderBranch(parent, isRoot = false) {
+        const list = document.createElement('ul');
+        list.className = isRoot ? 'file-tree' : 'tree-children';
+        const nodes = [...parent.children.values()].sort((a, b) =>
+          Number(b.folder) - Number(a.folder) || nameOrder.compare(a.name, b.name));
+        for (const node of nodes) {
+          const item = document.createElement('li');
+          const row = document.createElement(node.folder ? 'summary' : 'div');
+          row.className = 'tree-row';
+          row.dataset.path = node.path;
+          row.title = node.path;
+          const arrow = document.createElement('span');
+          arrow.className = node.folder ? 'tree-arrow' : 'tree-arrow-spacer';
+          arrow.setAttribute('aria-hidden', 'true');
+          if (!node.folder) arrow.style.cssText = 'width:12px;flex:0 0 12px';
+          const icon = document.createElement('span');
+          icon.className = 'tree-icon';
+          icon.textContent = node.folder ? '📁' : '▤';
+          icon.setAttribute('aria-hidden', 'true');
+          const name = document.createElement('span');
+          name.className = 'tree-name';
+          name.textContent = node.name;
+          const meta = document.createElement('span');
+          meta.className = 'tree-meta';
+          meta.textContent = node.folder
+            ? `${node.count} ${node.count === 1 ? 'file' : 'files'}` : fileSize(node.size);
+          row.append(arrow, icon, name, meta);
+          if (node.folder) {
+            const details = document.createElement('details');
+            details.dataset.path = node.path;
+            details.open = !state.closed.has(node.path);
+            // Native summary activation supports both mouse and keyboard.
+            row.addEventListener('click', (event) => {
+              event.preventDefault();
+              details.open = !details.open;
+              if (details.open) state.closed.delete(node.path);
+              else state.closed.add(node.path);
+            });
+            details.append(row, renderBranch(node));
+            item.append(details);
+          } else {
+            item.append(row);
+          }
+          list.append(item);
+        }
+        return list;
+      }
+      container.append(renderBranch(root, true));
+      if (focusedPath) {
+        for (const summary of container.querySelectorAll('summary')) {
+          if (summary.dataset.path === focusedPath) summary.focus({preventScroll: true});
+        }
+      }
+      container.scrollTop = scrollTop;
+    }
+
+    for (const id of ['torrent', 'data']) {
+      const container = document.getElementById(id + '-files');
+      const actions = document.createElement('div');
+      actions.className = 'tree-actions';
+      for (const [label, open] of [['Expand all', true], ['Collapse all', false]]) {
+        const control = document.createElement('button');
+        control.type = 'button';
+        control.textContent = label;
+        control.setAttribute('aria-controls', container.id);
+        control.addEventListener('click', () => {
+          const state = treeStates.get(id);
+          if (!state) return;
+          for (const details of container.querySelectorAll('details')) {
+            details.open = open;
+            if (open) state.closed.delete(details.dataset.path);
+            else state.closed.add(details.dataset.path);
+          }
+        });
+        actions.append(control);
+      }
+      container.previousElementSibling.append(actions);
+    }
+
+    async function refresh() {
+      try {
+        const response = await fetch('/api/status', {cache: 'no-store'});
+        if (!response.ok) throw new Error(`Status request failed (${response.status})`);
+        const data = await response.json();
+        document.getElementById('torrent-path').textContent = data.torrent_path;
+        document.getElementById('data-path').textContent = data.data_path;
+        renderFiles('torrent', data.torrent_files);
+        renderFiles('data', data.data_files);
+        document.getElementById('logs').textContent = data.logs.length ? data.logs.join('\n') : 'No logs yet';
+        dataRoot = data.data_root || '/app/data';
+        document.getElementById('data-root').textContent = dataRoot;
+        if (!setupLoaded) {
+          sourceInput.value = data.directories?.source || '';
+          destinationInput.value = data.directories?.destination || '';
+          setupMessage.textContent = data.configured ? 'Folders saved. You can change them here.' : 'Save your folders to enable scanning.';
+          setupLoaded = true;
+          updatePreviews();
+        }
+        button.disabled = requestRunning || setupRunning || data.scanning || !data.configured;
+        saveButton.disabled = setupRunning || data.scanning;
+        if (data.last_error) {
+          status.textContent = `Last scan encountered an error: ${data.last_error}`;
+          status.className = 'status error';
+        } else if (!data.configured) {
+          status.textContent = 'Setup required · choose your folders below';
+          status.className = 'status';
+        } else if (data.scanning) {
+          status.textContent = 'Scanning…';
+          status.className = 'status';
+        } else if (data.last_scan_at) {
+          const summary = data.last_result || {};
+          status.textContent = `Last scan: ${new Date(data.last_scan_at).toLocaleString()} · ${summary.linked ?? 0} linked · ${summary.pending ?? 0} pending · ${summary.already_linked ?? 0} already linked · ${summary.skipped ?? 0} skipped · ${summary.failed ?? 0} failed · ${summary.nfo_created ?? 0} NFOs created · ${summary.nfo_unparsed ?? 0} unparsed videos · ${summary.nfo_failed ?? 0} NFO errors · ${summary.posters_created ?? 0} posters created · ${summary.posters_missing ?? 0} posters unavailable · ${summary.posters_unparsed ?? 0} poster seasons unrecognized · ${summary.posters_deferred ?? 0} poster retries deferred · ${summary.posters_failed ?? 0} poster errors`;
+          status.className = 'status';
+        } else {
+          status.textContent = 'Waiting for the first scan';
+          status.className = 'status';
+        }
+      } catch (error) {
+        status.textContent = error.message;
+        status.className = 'status error';
+      }
+    }
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      setupRunning = true;
+      saveButton.disabled = true;
+      button.disabled = true;
+      setupMessage.className = 'status';
+      setupMessage.textContent = 'Checking folders and hard-link support…';
+      try {
+        const response = await fetch('/api/config', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json', 'X-FolderSync-Action': 'configure'},
+          body: JSON.stringify({source: sourceInput.value, destination: destinationInput.value})
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || `Save failed (${response.status})`);
+        sourceInput.value = data.directories.source;
+        destinationInput.value = data.directories.destination;
+        updatePreviews();
+        setupMessage.textContent = 'Folders saved. Automatic scanning is enabled. Use Sync now to start the first scan.';
+      } catch (error) {
+        setupMessage.textContent = error.message;
+        setupMessage.className = 'status error';
+      } finally {
+        setupRunning = false;
+        saveButton.disabled = false;
+        await refresh();
+      }
+    });
+
+    button.addEventListener('click', async () => {
+      requestRunning = true;
+      button.disabled = true;
+      status.textContent = 'Scanning…';
+      status.className = 'status';
+      try {
+        const response = await fetch('/api/sync', {
+          method: 'POST',
+          headers: {'X-FolderSync-Action': 'sync'}
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || `Scan failed (${response.status})`);
+      } catch (error) {
+        status.textContent = error.message;
+        status.className = 'status error';
+      } finally {
+        requestRunning = false;
+        await refresh();
+      }
+    });
+
+    refresh();
+    setInterval(refresh, 10000);
+  </script>
+</body>
+</html>

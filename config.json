@@ -1,0 +1,134 @@
+{
+  "extensions": [
+    ".mp4",
+    ".mkv",
+    ".avi",
+    ".mov"
+  ],
+  "rules": [
+    {
+      "contains": "2025",
+      "destination": "Season 25"
+    },
+    {
+      "contains": "2026",
+      "destination": "Season 26"
+    },
+    {
+      "contains": "2027",
+      "destination": "Season 27"
+    },
+    {
+      "contains": "2028",
+      "destination": "Season 28"
+    },
+    {
+      "contains": "2029",
+      "destination": "Season 29"
+    },
+    {
+      "contains": "2030",
+      "destination": "Season 30"
+    },
+    {
+      "contains": "2031",
+      "destination": "Season 31"
+    },
+    {
+      "contains": "2032",
+      "destination": "Season 32"
+    },
+    {
+      "contains": "2033",
+      "destination": "Season 33"
+    },
+    {
+      "contains": "2034",
+      "destination": "Season 34"
+    },
+    {
+      "contains": "2035",
+      "destination": "Season 35"
+    },
+    {
+      "contains": "2036",
+      "destination": "Season 36"
+    },
+    {
+      "contains": "2037",
+      "destination": "Season 37"
+    },
+    {
+      "contains": "2038",
+      "destination": "Season 38"
+    },
+    {
+      "contains": "2039",
+      "destination": "Season 39"
+    },
+    {
+      "contains": "2040",
+      "destination": "Season 40"
+    }
+  ],
+  "formula1": {
+    "grand_prix": [
+      "Australia",
+      "China",
+      "Japan",
+      "Bahrain",
+      "Saudi Arabia",
+      "Miami",
+      "Emilia-Romagna",
+      "Monaco",
+      "Barcelona-Catalunya",
+      "Spain Barcelona",
+      "Spain",
+      "Canada",
+      "Austria",
+      "Great Britain",
+      "Belgium",
+      "Hungary",
+      "Netherlands",
+      "Italy",
+      "Monza",
+      "Azerbaijan",
+      "Singapore",
+      "United States",
+      "Mexico",
+      "São Paulo",
+      "Las Vegas",
+      "Qatar",
+      "Abu Dhabi"
+    ],
+    "events": {
+      "Post-Qualifying Show": "Post-Qualifying-Show",
+      "Post Qualifying Show": "Post-Qualifying-Show",
+      "Post-Race Show": "Post-Race-Show",
+      "Post Race Show": "Post-Race-Show",
+      "Pre-Race Show": "Pre-Race-Show",
+      "Pre Race Show": "Pre-Race-Show",
+      "Pre-Qualifying Show": "Pre-Qualifying-Show",
+      "Post-Sprint Show": "Post-Sprint-Show",
+      "Pre-Sprint Show": "Pre-Sprint-Show",
+      "Paddock Uncut": "Paddock-Uncut",
+      "Drivers Press Conference": "Drivers-Press-Conference",
+      "Weekend Warm-Up": "Weekend-Warm-Up",
+      "Sprint Qualifying": "Sprint-Qualifying",
+      "Sprint Shootout": "Sprint-Shootout",
+      "Practice 1": "Practice-1",
+      "Practice 2": "Practice-2",
+      "Practice 3": "Practice-3",
+      "FP1": "Practice-1",
+      "FP2": "Practice-2",
+      "FP3": "Practice-3",
+      "Qualification": "Qualify",
+      "Qualifying": "Qualify",
+      "Practice": "Practice",
+      "Sprint": "Sprint",
+      "Quali": "Qualify",
+      "Qualify": "Qualify",
+      "Race": "Race"
+    }
+  }
+}
