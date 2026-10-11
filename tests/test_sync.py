@@ -8,14 +8,10 @@ from dataclasses import replace
 from unittest.mock import patch
 
 from sync import Config, LinkSync, Rule, load_config, load_directories, normalized_f1_name
-from poster import PosterResult
 
 
 class LinkSyncTests(unittest.TestCase):
     def setUp(self):
-        poster_patch = patch("sync.scan_posters", return_value=PosterResult())
-        poster_patch.start()
-        self.addCleanup(poster_patch.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -227,9 +223,6 @@ class LinkSyncTests(unittest.TestCase):
 
 class Formula1NamingTests(unittest.TestCase):
     def setUp(self):
-        poster_patch = patch("sync.scan_posters", return_value=PosterResult())
-        poster_patch.start()
-        self.addCleanup(poster_patch.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)

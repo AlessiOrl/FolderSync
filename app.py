@@ -120,7 +120,7 @@ class SyncService:
         finally:
             self.scan_lock.release()
 
-    def scan_now(self, pending_only: bool = False, *, retry_posters: bool = False) -> dict[str, int] | None:
+    def scan_now(self, pending_only: bool = False) -> dict[str, int] | None:
         if not self.scan_lock.acquire(blocking=False):
             return None
         try:
@@ -128,10 +128,7 @@ class SyncService:
                 return None
             if pending_only and not self.sync.pending_ready():
                 return None
-            if retry_posters:
-                result = self.sync.scan_once(pending_only=pending_only, retry_posters=True)
-            else:
-                result = self.sync.scan_once(pending_only=pending_only)
+            result = self.sync.scan_once(pending_only=pending_only)
             summary = asdict(result)
             with self.state_lock:
                 self.last_scan_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -224,7 +221,7 @@ def make_handler(service: SyncService, index_html: bytes) -> type[BaseHTTPReques
                 self.send_json(409, {"error": "Choose source and destination folders first"})
                 return
             try:
-                result = service.scan_now(retry_posters=True)
+                result = service.scan_now()
             except Exception:
                 self.send_json(500, {"error": "Scan failed; see recent logs"})
                 return

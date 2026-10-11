@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Callable
 
 from nfo import ensure_nfo, scan as scan_nfo
-from poster import scan as scan_posters
 
 
 LOG = logging.getLogger("folder_sync")
@@ -88,12 +87,6 @@ class ScanResult:
     nfo_existing: int = 0
     nfo_unparsed: int = 0
     nfo_failed: int = 0
-    posters_created: int = 0
-    posters_existing: int = 0
-    posters_missing: int = 0
-    posters_unparsed: int = 0
-    posters_deferred: int = 0
-    posters_failed: int = 0
 
 
 @dataclass(frozen=True)
@@ -252,8 +245,6 @@ class LinkSync:
         self.pending_paths: set[Path] = set()
         self.pending_due_at: float | None = None
         self.previous: dict[Path, tuple[tuple[int, int, int, int], float]] = {}
-        self.poster_attempted: dict[Path, float] = {}
-        self.poster_retry_after = 0.0
         self.registry_path = registry_path or self.data.parent / ".foldersync-links.json"
         self.registry = self._load_registry()
         self.pair_key = json.dumps([str(self.torrent), str(self.data)], ensure_ascii=False)
@@ -545,40 +536,7 @@ class LinkSync:
         if status == "created":
             LOG.info("Created episode NFO %s", target.with_suffix(".nfo"))
 
-    def _scan_posters(self, root: Path, result: ScanResult, *, retry: bool = False) -> None:
-        def report_poster(message: str) -> None:
-            if message.startswith("ERROR "):
-                self.last_error = message
-                LOG.error("%s", message)
-            elif message.startswith(("CREATED ", "NO POSTER ")):
-                LOG.info("%s", message)
-            else:
-                LOG.debug("%s", message)
-
-        def should_attempt(folder: Path) -> bool:
-            now = self.clock()
-            if not retry and now < self.poster_retry_after:
-                return False
-            previous = self.poster_attempted.get(folder)
-            if not retry and previous is not None and now - previous < 6 * 60 * 60:
-                return False
-            self.poster_attempted[folder] = now
-            return True
-
-        posters = scan_posters(root, self.config.grand_prix, write=True,
-                               report=report_poster, should_attempt=should_attempt)
-        result.posters_created += posters.created
-        result.posters_existing += posters.existing
-        result.posters_missing += posters.missing
-        result.posters_unparsed += posters.unparsed
-        result.posters_deferred += posters.deferred
-        result.posters_failed += posters.errors
-        if posters.errors:
-            self.poster_retry_after = self.clock() + 6 * 60 * 60
-        elif retry and (posters.created or posters.missing):
-            self.poster_retry_after = 0.0
-
-    def scan_once(self, pending_only: bool = False, *, retry_posters: bool = False) -> ScanResult:
+    def scan_once(self, pending_only: bool = False) -> ScanResult:
         result = ScanResult()
         self.last_error = None
         current: dict[Path, tuple[tuple[int, int, int, int], float]] = {}
@@ -651,8 +609,6 @@ class LinkSync:
                 self.pending_paths.add(relative)
             elif pending_only and outcome in ("linked", "already_linked"):
                 self._nfo_for_link(relative, signature, result)
-                if title is not None:
-                    self._scan_posters(destination_dir, result)
 
         if not pending_only:
             def report_nfo(message: str) -> None:
@@ -669,7 +625,6 @@ class LinkSync:
             result.nfo_existing = nfo_result.existing
             result.nfo_unparsed = nfo_result.unparsed
             result.nfo_failed = nfo_result.errors
-            self._scan_posters(self.data, result, retry=retry_posters)
 
         self.pending_due_at = min(
             (current[path][1] + self.stable_seconds for path in self.pending_paths),
@@ -678,9 +633,7 @@ class LinkSync:
         self.previous = current
         LOG.info(
             "Scan complete: linked=%d pending=%d already_linked=%d skipped=%d failed=%d "
-            "nfo_created=%d nfo_existing=%d nfo_unparsed=%d nfo_failed=%d "
-            "posters_created=%d posters_existing=%d posters_missing=%d "
-            "posters_unparsed=%d posters_deferred=%d posters_failed=%d",
+            "nfo_created=%d nfo_existing=%d nfo_unparsed=%d nfo_failed=%d",
             result.linked,
             result.pending,
             result.already_linked,
@@ -690,12 +643,6 @@ class LinkSync:
             result.nfo_existing,
             result.nfo_unparsed,
             result.nfo_failed,
-            result.posters_created,
-            result.posters_existing,
-            result.posters_missing,
-            result.posters_unparsed,
-            result.posters_deferred,
-            result.posters_failed,
         )
         return result
 

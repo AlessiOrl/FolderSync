@@ -282,7 +282,7 @@
           status.className = 'status';
         } else if (data.last_scan_at) {
           const summary = data.last_result || {};
-          status.textContent = `Last scan: ${new Date(data.last_scan_at).toLocaleString()} · ${summary.linked ?? 0} linked · ${summary.pending ?? 0} pending · ${summary.already_linked ?? 0} already linked · ${summary.skipped ?? 0} skipped · ${summary.failed ?? 0} failed · ${summary.nfo_created ?? 0} NFOs created · ${summary.nfo_unparsed ?? 0} unparsed videos · ${summary.nfo_failed ?? 0} NFO errors · ${summary.posters_created ?? 0} posters created · ${summary.posters_missing ?? 0} posters unavailable · ${summary.posters_unparsed ?? 0} poster seasons unrecognized · ${summary.posters_deferred ?? 0} poster retries deferred · ${summary.posters_failed ?? 0} poster errors`;
+          status.textContent = `Last scan: ${new Date(data.last_scan_at).toLocaleString()} · ${summary.linked ?? 0} linked · ${summary.pending ?? 0} pending · ${summary.already_linked ?? 0} already linked · ${summary.skipped ?? 0} skipped · ${summary.failed ?? 0} failed · ${summary.nfo_created ?? 0} NFOs created · ${summary.nfo_unparsed ?? 0} unparsed videos · ${summary.nfo_failed ?? 0} NFO errors`;
           status.className = 'status';
         } else {
           status.textContent = 'Waiting for the first scan';

@@ -72,10 +72,10 @@ class WebTests(unittest.TestCase):
         self.assertEqual((self.source.stat().st_dev, self.source.stat().st_ino), (destination.stat().st_dev, destination.stat().st_ino))
         self.assertEqual(self.request_json("/api/status")["data_files"][0]["path"], "season 26/bahrein.mp4")
 
-    def test_manual_sync_requests_immediate_poster_retry(self):
+    def test_manual_sync_requests_full_scan(self):
         with patch.object(self.service.sync, "scan_once", wraps=self.service.sync.scan_once) as scan:
             self.request_json("/api/sync", "POST", {"X-FolderSync-Action": "sync"})
-        scan.assert_called_once_with(pending_only=False, retry_posters=True)
+        scan.assert_called_once_with(pending_only=False)
 
     def test_scheduler_rechecks_pending_at_ten_seconds_and_scans_at_120(self):
         scans = []

@@ -73,33 +73,6 @@ python3 nfo.py /data/f1 --write
 
 For the Docker setup above, the destination path is `/app/data/destination` inside the container. Rebuild and replace the container to enable automatic metadata creation.
 
-## Formula 1 season posters
-
-FolderSync looks for a `[Media Kit]` image post in [r/Formula1posters](https://www.reddit.com/r/Formula1posters/) for each `Season YYRR` folder that contains a recognized GP episode. If none is found, it looks for an explicitly titled official or FIA image post for the same GP and year, then for a matching F1 team poster. When several team posters match, it chooses the one with the highest Reddit score. It uses the GP name in the episode filenames and the year in `YYRR`, rather than assuming a fixed round calendar. For example, `Season 2616` with a Bahrain episode can match `Bahrain Grand Prix In Malaysia 2026 [Media Kit]`. It accepts `F1` title prefixes and maps `Spain` to the Spanish GP; `Spain Barcelona` in round 07 of 2026 maps to the separate Barcelona-Catalunya GP.
-
-The downloaded JPEG or PNG is saved beside the episodes as `SeasonYYRR.jpg` or `SeasonYYRR.png`, for example `Season 2616/Season2616.jpg`. This is [Plex's season artwork naming convention](https://support.plex.tv/articles/200220717-local-media-assets-tv-shows/). Enable local assets for the Plex library and refresh its metadata to see a new poster. FolderSync never replaces an existing season poster. Automatic scans retry missing posts and search errors after six hours while the app remains running. The scan summary shows unrecognized season folders and deferred retries; click **Sync now** to retry poster lookup immediately. If the latest scan shows all zero poster counts, check that the destination contains a `Season YYRR` folder with a recognized GP episode. The container needs internet access to Reddit and Reddit's image hosts. If Reddit refuses automated requests, you can place `SeasonYYRR.jpg` or `SeasonYYRR.png` in the season folder yourself; FolderSync will preserve it.
-
-To preview or fill missing posters manually, run:
-
-```text
-python3 poster.py /app/data/destination --dry-run
-python3 poster.py /app/data/destination --write
-```
-
-The preview lists folders that need a poster without contacting Reddit. The write command searches the subreddit and downloads matching images. A folder with no recognized GP episode or with episodes naming different GPs is skipped so a wrong poster is not assigned.
-
-Reddit [requires OAuth for Data API access](https://support.reddithelp.com/hc/en-us/articles/16160319875092-Reddit-Data-API-Wiki). Register or obtain an approved Reddit script app, then put its credentials in a private `.env` file beside the Docker command:
-
-```text
-REDDIT_CLIENT_ID=your_app_id
-REDDIT_CLIENT_SECRET=your_app_secret
-REDDIT_USERNAME=your_reddit_username
-```
-
-Add `--env-file .env` to the `docker run` command above. The `.env` file is excluded from this project's Git and Docker build context. Never put the secret in `config.json`. If credentials are absent or rejected, poster lookup reports an error; NFO creation and video linking still run. This uses Reddit's [app-only OAuth flow](https://github.com/reddit-archive/reddit/wiki/OAuth2#application-only-oauth).
-
-For 2026, the recognized GP names now include China (round 02) and Barcelona-Catalunya (round 07). The Barcelona poster is matched separately from the Spanish GP at round 14. Some rounds may lack a `[Media Kit]` post. FolderSync then accepts a matching official or FIA poster from the same subreddit, followed by a team poster for the same GP and year. For example, a 2026 Miami folder can use `Williams Miami Grand Prix 2026`; a 2025 Miami poster cannot match. If no suitable post exists, the folder remains without automatic artwork until a post appears or you add local artwork yourself.
-
 ## Replace an existing container
 
 ```text
