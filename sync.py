@@ -30,6 +30,35 @@ DEFAULT_GRAND_PRIX = (
     "Hungary", "Netherlands", "Italy", "Monza", "Azerbaijan", "Singapore",
     "United States", "Mexico", "São Paulo", "Las Vegas", "Qatar", "Abu Dhabi",
 )
+# Aliases resolve only to names enabled in config.grand_prix.
+GRAND_PRIX_ALIASES = {
+    "Australia": ("Melbourne", "Albert Park", "Australia Melbourne", "Australian"),
+    "China": ("Shanghai", "China Shanghai", "Chinese"),
+    "Japan": ("Suzuka", "Japan Suzuka", "Japanese"),
+    "Bahrain": ("Sakhir", "Bahrain Sakhir"),
+    "Saudi Arabia": ("Saudi", "Jeddah", "Saudi Jeddah", "Saudi Arabia Jeddah", "Saudi Arabian"),
+    "Miami": ("USA Miami", "United States Miami"),
+    "Emilia-Romagna": ("Imola", "Emilia Romagna Imola"),
+    "Monaco": ("Monte Carlo",),
+    "Barcelona-Catalunya": ("Barcelona", "Catalunya", "Catalonia"),
+    "Spain": ("Madrid", "Spain Madrid", "Madring", "Spanish"),
+    "Canada": ("Montreal", "Montréal", "Canada Montreal", "Gilles Villeneuve", "Canadian"),
+    "Austria": ("Spielberg", "Red Bull Ring", "Austria Spielberg", "Austrian"),
+    "Great Britain": ("UK", "GB", "Britain", "British", "United Kingdom", "Silverstone", "UK Silverstone"),
+    "Belgium": ("Spa", "Spa Francorchamps", "Belgium Spa", "Belgian"),
+    "Hungary": ("Budapest", "Hungaroring", "Hungary Budapest", "Hungarian"),
+    "Netherlands": ("Holland", "Dutch", "Zandvoort", "Netherlands Zandvoort"),
+    "Italy": ("Italy Monza", "Italian"),
+    "Azerbaijan": ("Baku", "Azerbaijan Baku"),
+    "Singapore": ("Marina Bay", "Singapore Marina Bay"),
+    "United States": ("USA COTA", "USA", "COTA", "Austin", "USA Austin",
+                      "United States Austin", "United States COTA", "Circuit of the Americas"),
+    "Mexico": ("Mexico City", "Hermanos Rodriguez", "Mexican"),
+    "São Paulo": ("Sao Paulo", "Brazil", "Brazilian", "Interlagos", "Brazil Sao Paulo"),
+    "Las Vegas": ("Vegas", "USA Las Vegas", "United States Las Vegas", "Las Vegas Strip"),
+    "Qatar": ("Lusail", "Losail", "Qatar Lusail", "Qatar Losail"),
+    "Abu Dhabi": ("Yas Marina", "UAE", "United Arab Emirates", "Abu Dhabi Yas Marina"),
+}
 DEFAULT_EVENTS = (
     ("Post-Qualifying Show", "Post-Qualifying-Show"),
     ("Post Qualifying Show", "Post-Qualifying-Show"),
@@ -216,8 +245,13 @@ def normalized_f1_name(filename: str, config: Config) -> tuple[F1Name | None, st
     year, round_number, tail = match.groups()
     if not 1 <= int(round_number) <= 26:
         return None, "Formula 1 round must be between 01 and 26"
-    for gp in sorted(config.grand_prix, key=len, reverse=True):
-        gp_match = re.match(rf"^{_words_pattern(gp)}{SEPARATOR}(.+)$", tail, re.I)
+    # Match the longest name across all GPs so USA Miami wins over USA.
+    # Configured names take priority over built-in aliases of the same length.
+    candidates = [(gp, gp) for gp in config.grand_prix]
+    candidates.extend((alias, gp) for gp in config.grand_prix
+                      for alias in GRAND_PRIX_ALIASES.get(gp, ()))
+    for name, gp in sorted(candidates, key=lambda item: len(item[0]), reverse=True):
+        gp_match = re.match(rf"^{_words_pattern(name)}{SEPARATOR}(.+)$", tail, re.I)
         if gp_match is None:
             continue
         event_tail = gp_match.group(1)

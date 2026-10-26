@@ -277,6 +277,93 @@ class Formula1NamingTests(unittest.TestCase):
         self.assertIsNone(normalized_f1_name("Formula1.2026.Round16.Bahrain.Special.mkv", self.config)[0])
         self.assertEqual(normalized_f1_name("other.2026.mkv", self.config), (None, None))
 
+    def test_usa_cota_aliases_use_configured_canonical_name(self):
+        for gp in ("USA.COTA", "usa_cota", "USA-COTA", "USA", "COTA", "United.States"):
+            for event, expected in (("Qualifying", "Qualify"), ("Race", "Race")):
+                with self.subTest(gp=gp, event=event):
+                    name = f"Formula1.2026.Round18.{gp}.{event}.SKY.F1TV.WEB-DL.1080p.H264.English-MWR.mkv"
+                    title, reason = normalized_f1_name(name, self.config)
+                    self.assertIsNone(reason)
+                    self.assertEqual(title.episode_name(1), f"S2618E01 - United States {expected}.mkv")
+        config = replace(self.config, grand_prix=("Bahrain",))
+        title, reason = normalized_f1_name("Formula1.2026.Round18.USA.COTA.Race.mkv", config)
+        self.assertIsNone(title)
+        self.assertEqual(reason, "unknown Formula 1 Grand Prix")
+
+    def test_country_and_circuit_aliases(self):
+        examples = {
+            "Melbourne": "Australia", "Shanghai": "China", "Suzuka": "Japan",
+            "Sakhir": "Bahrain", "Saudi.Jeddah": "Saudi Arabia",
+            "Jeddah": "Saudi Arabia", "USA.Miami": "Miami", "Imola": "Emilia Romagna",
+            "Monte.Carlo": "Monaco", "Barcelona": "Barcelona Catalunya",
+            "Spain.Barcelona": "Spain Barcelona", "Spain.Madrid": "Spain",
+            "Montréal": "Canada", "Red.Bull.Ring": "Austria",
+            "UK": "Great Britain", "Silverstone": "Great Britain",
+            "Spa.Francorchamps": "Belgium", "Hungaroring": "Hungary",
+            "Dutch": "Netherlands", "Zandvoort": "Netherlands",
+            "Italy.Monza": "Italy", "Monza": "Monza", "Baku": "Azerbaijan",
+            "Marina.Bay": "Singapore", "USA.Austin": "United States",
+            "Circuit.of.the.Americas": "United States", "Mexico.City": "Mexico",
+            "Sao.Paulo": "São Paulo", "Brazil": "São Paulo", "Interlagos": "São Paulo",
+            "USA.Las.Vegas": "Las Vegas", "United.States.Las.Vegas": "Las Vegas",
+            "Losail": "Qatar", "Yas.Marina": "Abu Dhabi",
+        }
+        for alias, expected in examples.items():
+            for separator in (".", "_", "-", " "):
+                with self.subTest(alias=alias, separator=separator):
+                    name = alias.replace(".", separator).lower()
+                    title, reason = normalized_f1_name(
+                        f"Formula1.2026.Round18.{name}.Sprint.Qualifying.F1TV.mkv", self.config)
+                    self.assertIsNone(reason)
+                    self.assertEqual(title.grand_prix, expected)
+                    self.assertEqual(title.event, "Sprint Qualifying")
+
+    def test_alias_boundaries_and_configured_name_priority(self):
+        for name in ("UKraine", "USAX", "SpaFrancorchamps", "BrazilianExtra"):
+            with self.subTest(name=name):
+                title, reason = normalized_f1_name(f"Formula1.2026.Round18.{name}.Race.mkv", self.config)
+                self.assertIsNone(title)
+                self.assertEqual(reason, "unknown Formula 1 Grand Prix")
+        config = replace(self.config, grand_prix=("United States", "USA"))
+        title, reason = normalized_f1_name("Formula1.2026.Round18.USA.Race.mkv", config)
+        self.assertIsNone(reason)
+        self.assertEqual(title.grand_prix, "USA")
+        title, reason = normalized_f1_name("Formula1.2026.Round18.USA.Miami.Race.mkv", self.config)
+        self.assertIsNone(reason)
+        self.assertEqual(title.grand_prix, "Miami")
+
+    def test_saved_usa_cota_links_are_normalized_and_get_nfos(self):
+        config = load_config(Path(__file__).resolve().parents[1] / "config.json")
+        legacy_dir = self.destination / "Season 26"
+        legacy_dir.mkdir()
+        links = {}
+        sources = []
+        for event in ("Qualifying", "Race"):
+            name = f"Formula1.2026.Round18.USA.COTA.{event}.SKY.F1TV.WEB-DL.1080p.H264.English-MWR.mkv"
+            source = self.make_source(f"{Path(name).stem}/{name}")
+            old = legacy_dir / name
+            old.hardlink_to(source)
+            links[source.relative_to(self.source).as_posix()] = old.relative_to(self.destination).as_posix()
+            sources.append((source, old))
+        registry_path = self.root / ".foldersync-links.json"
+        pair_key = json.dumps([str(self.source), str(self.destination)], ensure_ascii=False)
+        registry_path.write_text(json.dumps({"version": 1, "pairs": {pair_key: links}}))
+        sync = LinkSync(self.destination, self.source, config, clock=lambda: self.now,
+                        registry_path=registry_path)
+        result = self.ready_scan(sync)
+        self.assertEqual(result.already_linked, 2)
+        self.assertEqual(result.nfo_unparsed, 0)
+        saved = json.loads(registry_path.read_text())["pairs"][pair_key]
+        for number, ((source, old), event) in enumerate(zip(sources, ("Qualify", "Race")), start=1):
+            target = self.destination / "Season 2618" / f"S2618E{number:02d} - United States {event}.mkv"
+            self.assertTrue(target.samefile(source))
+            self.assertFalse(old.exists())
+            self.assertEqual(saved[source.relative_to(self.source).as_posix()],
+                             target.relative_to(self.destination).as_posix())
+            nfo = ET.parse(target.with_suffix(".nfo")).getroot()
+            self.assertEqual(nfo.findtext("title"), f"United States {event}")
+        self.assertEqual(self.ready_scan(sync).already_linked, 2)
+
     def test_monza_sessions_share_round_folder_and_increment(self):
         names = (
             "Formula1.2026.Round01.Monza.Practice.1.mp4",
