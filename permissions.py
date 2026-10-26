@@ -13,7 +13,7 @@ def policy():
     if not raw.isascii() or not raw.isdecimal() or not 0 <= int(raw) < 2**32 - 1:
         raise ValueError("PGID must be a numeric host group ID")
     modes = []
-    for name, default in (("FILE_MODE", "0764"), ("DIRECTORY_MODE", "0764")):
+    for name, default in (("FILE_MODE", "0774"), ("DIRECTORY_MODE", "0774")):
         value = os.environ.get(name, default)
         if not value or any(char not in "01234567" for char in value) or int(value, 8) > 0o7777:
             raise ValueError(f"{name} must be an octal permission mode")

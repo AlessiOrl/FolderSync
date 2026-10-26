@@ -17,8 +17,8 @@ class PermissionTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        environment = patch.dict(os.environ, {"PGID": "100", "FILE_MODE": "0764",
-                                             "DIRECTORY_MODE": "0764"})
+        environment = patch.dict(os.environ, {"PGID": "100", "FILE_MODE": "0774",
+                                             "DIRECTORY_MODE": "0774"})
         environment.start()
         self.addCleanup(environment.stop)
         # Verify the root ownership request without requiring root to run tests.
@@ -46,10 +46,10 @@ class PermissionTests(unittest.TestCase):
         (nested / "external-directory").symlink_to(outside, target_is_directory=True)
         media.chmod(0o600)
         repair_tree(destination)
-        self.assertEqual(self.mode(destination), 0o0764)
-        self.assertEqual(self.mode(nested), 0o0764)
-        self.assertEqual(self.mode(media), 0o764)
-        self.assertEqual(self.mode(original), 0o764)
+        self.assertEqual(self.mode(destination), 0o0774)
+        self.assertEqual(self.mode(nested), 0o0774)
+        self.assertEqual(self.mode(media), 0o774)
+        self.assertEqual(self.mode(original), 0o774)
         self.assertEqual(self.mode(private), 0o600)
         self.assertTrue(media.samefile(original))
         self.assertTrue(self.chown.called)
@@ -67,16 +67,16 @@ class PermissionTests(unittest.TestCase):
         self.assertEqual(sync.scan_once().linked, 1)
         linked = destination / "nested/deeper" / video.name
         self.assertTrue(video.samefile(linked))
-        self.assertEqual(self.mode(linked), 0o764)
-        self.assertEqual(self.mode(linked.parent), 0o0764)
-        self.assertEqual(self.mode(linked.parent.parent), 0o0764)
-        self.assertEqual(self.mode(sync.registry_path), 0o764)
-        self.assertEqual(self.mode(linked.with_suffix(".nfo")), 0o764)
+        self.assertEqual(self.mode(linked), 0o774)
+        self.assertEqual(self.mode(linked.parent), 0o0774)
+        self.assertEqual(self.mode(linked.parent.parent), 0o0774)
+        self.assertEqual(self.mode(sync.registry_path), 0o774)
+        self.assertEqual(self.mode(linked.with_suffix(".nfo")), 0o774)
         metadata = destination / "season.nfo"
         write_xml(metadata, ET.Element("season"), update=True)
         metadata.chmod(0o600)
         write_xml(metadata, ET.Element("updated"), update=True)
-        self.assertEqual(self.mode(metadata), 0o764)
+        self.assertEqual(self.mode(metadata), 0o774)
 
     def test_poster_and_settings_publication_get_permissions(self):
         from posters import atomic_json, publish_image
@@ -88,7 +88,7 @@ class PermissionTests(unittest.TestCase):
         settings = DirectorySettings(self.root)
         settings.save({"source": "source", "destination": "destination"})
         for path in (poster, sidecar, settings.path):
-            self.assertEqual(self.mode(path), 0o764)
+            self.assertEqual(self.mode(path), 0o774)
 
     def test_custom_artwork_and_basic_nfo_get_permissions(self):
         from PIL import Image
@@ -96,10 +96,10 @@ class PermissionTests(unittest.TestCase):
         Image.new("RGB", (10, 10)).save(artwork)
         target = self.root / "poster.png"
         copy_art(self.root, Path("custom.png"), target)
-        self.assertEqual(self.mode(target), 0o764)
+        self.assertEqual(self.mode(target), 0o774)
         video = self.root / "S1E01 - Example.mkv"
         self.assertEqual(ensure_nfo(video), "created")
-        self.assertEqual(self.mode(video.with_suffix(".nfo")), 0o764)
+        self.assertEqual(self.mode(video.with_suffix(".nfo")), 0o774)
 
     def test_disabled_policy_preserves_existing_permissions(self):
         path = self.root / "private"

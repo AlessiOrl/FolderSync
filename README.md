@@ -37,18 +37,18 @@ Use your actual host path. On Linux or WSL, replace the Windows path with `/mnt/
 
 The image runs as root and automatically sets the selected destination and its existing contents to `root:100` when saved folders are restored at container startup, and when you select folders in the web page. It also applies permissions to newly linked videos, generated NFOs, artwork, and JSON files:
 
-- Files: `0764` (`-rwxrw-r--`) — root can read, write and execute; members of the selected group can read and write; everyone else can read.
-- Folders: `0764` (`drwxrw-r--`) — the same permission bits as files. Only root can enter folders and access files inside. Group members and everyone else can list entry names, but cannot open files or create/delete entries without directory execute permission. Set `DIRECTORY_MODE=2775` if they need that access.
+- Files: `0774` (`-rwxrwxr--`) — root and members of the selected group can read, write and execute; everyone else can read.
+- Folders: `0774` (`drwxrwxr--`) — root and members of the selected group can list, enter and write to folders. Everyone else can list entry names but cannot access files inside because they lack directory execute permission. Your Windows share login must map to the selected group. Set `DIRECTORY_MODE=2775` if everyone needs traversal access.
 
 Set `PGID` to the numeric ID of the host's `users` group. On Unraid this is usually `100`; check with `getent group users`. Add these options before the image name in your existing `docker run` command:
 
 ```text
--e PGID=100 -e FILE_MODE=0764 -e DIRECTORY_MODE=0764
+-e PGID=100 -e FILE_MODE=0774 -e DIRECTORY_MODE=0774
 ```
 
 The defaults above are built into the image, so rebuild it and recreate your container to apply them. Ownership requires running the container as root with the normal Docker ownership/permission capabilities. Docker matches groups by numeric ID; the group name displayed inside the container can differ from the host. These settings require a filesystem that supports Unix ownership and permissions.
 
-If media and metadata do not need executable permission, use `-e FILE_MODE=0664` instead. Everyone still has read access, and root and the group retain write access. With `0764`, root is the only identity granted execution by the file's mode bits; root's privileges can override normal permission checks.
+If media and metadata do not need executable permission, use `-e FILE_MODE=0664` instead. Everyone still has read access, and root and the group retain write access. With `0774`, root and the selected group have execution permission. Executable files may appear with a trailing `*` in `ls` output; this indicator is not part of the filename.
 
 **Hard links share ownership and permissions.** Applying these settings to a destination video also changes its source inode, including other hard links to it. The startup repair covers the selected destination only, skips symbolic links, and does not recursively change unrelated source files. Existing destination metadata is preserved while its permissions are repaired. Parent folders above the selected destination must already allow traversal. When running Python outside Docker, permission management is disabled unless `PGID` is set.
 
