@@ -296,7 +296,7 @@ class Formula1NamingTests(unittest.TestCase):
                              registry_path=self.root / ".foldersync-links.json")
         self.assertEqual(self.ready_scan(restarted).already_linked, 3)
         self.assertEqual(len(list(folder.glob("*.mp4"))), 3)
-        self.assertEqual(len(list(folder.glob("*.nfo"))), 3)
+        self.assertEqual(len(list(folder.glob("S[0-9]*.nfo"))), 3)
 
     def test_pending_link_creates_episode_nfo_automatically(self):
         source = self.make_source("2026/Formula1.2026.Round16.Bahrain.Qualifying.F1TV.mkv")
@@ -314,18 +314,18 @@ class Formula1NamingTests(unittest.TestCase):
         self.assertFalse(source.with_suffix(".nfo").exists())
         self.assertEqual(source.read_bytes(), b"video")
 
-    def test_nfo_failure_does_not_undo_link(self):
+    def test_metadata_failure_prevents_publishing_video(self):
         source = self.make_source("2026/Formula1.2026.Round16.Bahrain.Race.F1TV.mkv")
         sync = self.sync()
         self.assertEqual(sync.scan_once().pending, 1)
         self.now += 120
-        with patch("sync.ensure_nfo", side_effect=PermissionError("read-only destination")):
+        with patch("sync.prepare_metadata", side_effect=PermissionError("read-only destination")):
             result = sync.scan_once(pending_only=True)
         target = self.destination / "Season 2616" / "S2616E01 - Bahrain Race.mkv"
-        self.assertEqual((result.linked, result.nfo_failed), (1, 1))
-        self.assertTrue(target.samefile(source))
+        self.assertEqual((result.linked, result.failed), (0, 1))
+        self.assertFalse(target.exists())
         self.assertFalse(target.with_suffix(".nfo").exists())
-        self.assertIn("Cannot create episode NFO", sync.last_error)
+        self.assertIn("read-only destination", sync.last_error)
 
     def test_full_scan_backfills_existing_destination_without_source(self):
         folder = self.destination / "Season 2616"
@@ -368,7 +368,7 @@ class Formula1NamingTests(unittest.TestCase):
         self.assertEqual(self.ready_scan(sync).linked, 2)
         destinations = sorted((self.destination / "Season 2616").glob("*.mkv"))
         self.assertEqual(len(destinations), 2)
-        self.assertEqual(len(list((self.destination / "Season 2616").glob("*.nfo"))), 2)
+        self.assertEqual(len(list((self.destination / "Season 2616").glob("S[0-9]*.nfo"))), 2)
         self.assertTrue((self.destination / "Season 2616" / "S2616E01 - Bahrain Race.mkv").samefile(first))
         self.assertTrue((self.destination / "Season 2616" / "S2616E02 - Bahrain Race.mkv").samefile(second))
         restarted = self.sync()

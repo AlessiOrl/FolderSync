@@ -1,4 +1,29 @@
 {
+  "metadata": {
+    "title": "Formula 1",
+    "description": "Formula 1 Grand Prix weekend coverage, following drivers and teams as they compete for the Drivers' and Constructors' championships at circuits around the world. The collection includes practice, qualifying, sprint sessions and races when available. Explore each Grand Prix weekend from the opening practice sessions through the battle for pole position and the race to the chequered flag.",
+    "genres": ["Sports", "Motorsport"],
+    "events": {}
+  },
+  "posters": {
+    "enabled": true,
+    "require_before_link": false,
+    "sources": {
+      "Australia": ["https://www.grandprix.com.au/"],
+      "Italy": ["https://www.monzanet.it/"],
+      "Netherlands": ["https://dutchgp.com/"],
+      "Great Britain": ["https://www.silverstone.co.uk/"],
+      "Miami": ["https://f1miamigp.com/"],
+      "Singapore": ["https://singaporegp.sg/"],
+      "Azerbaijan": ["https://www.bakucitycircuit.com/news"]
+    },
+    "galleries": {
+      "*": ["https://www.salracing.com/story", "https://www.salracing.com/story/category/Posters"]
+    },
+    "media_kits": {
+      "Azerbaijan": ["https://www.bakucitycircuit.com/media-kit"]
+    }
+  },
   "extensions": [
     ".mp4",
     ".mkv",

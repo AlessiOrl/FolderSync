@@ -11,11 +11,12 @@ import re
 import stat
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
 from nfo import ensure_nfo, scan as scan_nfo
+from metadata import prepare as prepare_metadata, prepare_season, refresh_generated_shows, validate_config as validate_metadata
 
 
 LOG = logging.getLogger("folder_sync")
@@ -74,6 +75,8 @@ class Config:
     rules: tuple[Rule, ...]
     grand_prix: tuple[str, ...] = DEFAULT_GRAND_PRIX
     events: tuple[tuple[str, str], ...] = DEFAULT_EVENTS
+    posters: dict = field(default_factory=dict)
+    metadata: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -174,9 +177,24 @@ def parse_config(raw: object) -> Config:
         raise ValueError("formula1 events must map aliases to names")
     if any(re.search(r"[/\\.]", name) for name in (*grand_prix, *events.values())):
         raise ValueError("formula1 output names cannot contain path separators or dots")
+    posters = raw.get("posters", {})
+    if not isinstance(posters, dict) or not isinstance(posters.get("enabled", True), bool):
+        raise ValueError("posters must be an object with a boolean enabled flag")
+    if not isinstance(posters.get("require_before_link", False), bool):
+        raise ValueError("posters.require_before_link must be a boolean")
+    for section in ("sources", "media_kits", "galleries"):
+        sources = posters.get(section, {})
+        if not isinstance(sources, dict) or any(
+            not isinstance(name, str) or not isinstance(urls, list) or len(urls) > 5 or
+            any(not isinstance(url, str) or not url.startswith(("https://", "http://")) for url in urls)
+            for name, urls in sources.items()
+        ):
+            raise ValueError(f"posters.{section} must map GP names to at most five public HTTP(S) page URLs")
+    metadata = raw.get("metadata", {})
+    validate_metadata(metadata)
     return Config(
         frozenset(extension.casefold() for extension in extensions), tuple(rules),
-        tuple(grand_prix), tuple(events.items()),
+        tuple(grand_prix), tuple(events.items()), posters, metadata,
     )
 
 
@@ -249,6 +267,10 @@ class LinkSync:
         self.registry = self._load_registry()
         self.pair_key = json.dumps([str(self.torrent), str(self.data)], ensure_ascii=False)
         self.links: dict[str, str] = self.registry["pairs"].get(self.pair_key, {})
+        self.poster_callback = None
+        self.poster_ready = None
+        self.poster_deadlines: dict[Path, float] = {}
+        self.prepared_nfos = set()
 
     def _load_registry(self) -> dict:
         try:
@@ -483,6 +505,16 @@ class LinkSync:
                 LOG.info("Source changed during scan; waiting: %s", source)
                 return "pending"
 
+            title, _ = normalized_f1_name(source.name, self.config)
+            if title is not None:
+                year = int(F1_PREFIX.fullmatch(source.stem).group(1))
+                status = prepare_metadata(destination, title, year, self.config.metadata)
+                if status == "created":
+                    self.prepared_nfos.add(destination)
+                # Preparation may take time; recheck the source before publishing.
+                current = source.lstat()
+                if (current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns) != signature:
+                    return "pending"
             os.link(source, destination, follow_symlinks=False)
             LOG.info("Linked %s -> %s", source, destination)
             return "linked"
@@ -524,6 +556,8 @@ class LinkSync:
             return
         try:
             target = self.data / relative_path(saved, "saved destination")
+            if target in self.prepared_nfos:
+                return
             if not self._same_inode(target, signature):
                 return
             status = ensure_nfo(target)
@@ -538,6 +572,7 @@ class LinkSync:
 
     def scan_once(self, pending_only: bool = False) -> ScanResult:
         result = ScanResult()
+        self.prepared_nfos = set()
         self.last_error = None
         current: dict[Path, tuple[tuple[int, int, int, int], float]] = {}
         if pending_only:
@@ -545,6 +580,7 @@ class LinkSync:
         sources = [self.torrent / path for path in sorted(self.pending_paths)] if pending_only else self._sources()
         self.pending_paths = set()
         observed_at = self.clock()
+        pending_times = {}
 
         for source in sources:
             if pending_only:
@@ -597,9 +633,35 @@ class LinkSync:
             if destination_dir is None:
                 result.skipped += 1
                 continue
-            if observed_at - first_seen < self.stable_seconds:
+            artwork_ready = True
+            if title is not None:
+                try:
+                    year = int(F1_PREFIX.fullmatch(source.stem).group(1))
+                    prepare_season(destination_dir, title, year, self.config.metadata)
+                except (OSError, ValueError) as error:
+                    self.last_error = f"Cannot prepare artwork for {relative}: {error}"
+                    LOG.error("%s", self.last_error)
+                    result.failed += 1
+                    continue
+            if title is not None and self.poster_callback:
+                deadline = self.poster_deadlines.setdefault(destination_dir, observed_at + 60)
+                try:
+                    self.poster_callback(destination_dir, year, title.grand_prix)
+                    if self.poster_ready:
+                        artwork_ready = self.poster_ready(destination_dir)
+                except Exception as error:
+                    self.last_error = f"Cannot prepare poster for {relative}: {error}"
+                    LOG.warning("%s", self.last_error)
+                    artwork_ready = False
+                if observed_at >= deadline:
+                    artwork_ready = True
+            if observed_at - first_seen < self.stable_seconds or not artwork_ready:
                 result.pending += 1
                 self.pending_paths.add(relative)
+                due = first_seen + self.stable_seconds
+                if not artwork_ready:
+                    due = max(due, min(observed_at + 1, deadline))
+                pending_times[relative] = due
                 continue
             outcome = self._sync_source(source, relative, destination_dir, signature,
                                         title, legacy_directory)
@@ -621,13 +683,19 @@ class LinkSync:
                     LOG.debug("%s", message)
 
             nfo_result = scan_nfo(self.data, write=True, report=report_nfo)
-            result.nfo_created = nfo_result.created
-            result.nfo_existing = nfo_result.existing
+            published_nfos = sum(path.is_file() and path.with_suffix(".nfo").is_file() for path in self.prepared_nfos)
+            result.nfo_created = nfo_result.created + published_nfos
+            result.nfo_existing = nfo_result.existing - published_nfos
             result.nfo_unparsed = nfo_result.unparsed
-            result.nfo_failed = nfo_result.errors
+            result.nfo_failed = nfo_result.errors + refresh_generated_shows(
+                self.data, self.config.metadata, report_nfo)
+
+        if pending_only:
+            result.nfo_created += sum(path.is_file() for path in self.prepared_nfos)
 
         self.pending_due_at = min(
-            (current[path][1] + self.stable_seconds for path in self.pending_paths),
+            (pending_times.get(path, current[path][1] + self.stable_seconds)
+             for path in self.pending_paths),
             default=None,
         )
         self.previous = current

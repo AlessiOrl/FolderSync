@@ -16,6 +16,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from settings import DirectorySettings
+from posters import PosterWorker
+from metadata import regenerate
 from sync import CONFIG_FILE, Config, LinkSync, load_config
 
 
@@ -82,6 +84,17 @@ class SyncService:
         self.last_scan_at: str | None = None
         self.last_result: dict[str, int] | None = None
         self.last_error: str | None = None
+        self.last_metadata_result: dict[str, int] | None = None
+        self.last_metadata_at: str | None = None
+        self.regenerating_metadata = False
+        self.posters = PosterWorker(self.config.posters if self.config else {})
+        if self.sync:
+            self.attach_posters()
+
+    def attach_posters(self) -> None:
+        self.posters.configure(self.sync.data)
+        self.sync.poster_callback = self.posters.observe
+        self.sync.poster_ready = self.posters.ready
 
     def restore_settings(self) -> None:
         if self.settings is None:
@@ -93,6 +106,7 @@ class SyncService:
                 self.sync = LinkSync(destination, source, self.config, self.stable_seconds,
                                      registry_path=self.settings.root / ".foldersync-links.json")
                 self.selected = selected
+                self.attach_posters()
         except (OSError, ValueError, RuntimeError) as error:
             self.last_error = f"Saved folder settings need attention: {error}"
             LOG.error("%s", self.last_error)
@@ -110,10 +124,13 @@ class SyncService:
             self.settings.save(selected)
             with self.state_lock:
                 self.sync = replacement
+                self.attach_posters()
                 self.selected = selected
                 self.last_scan_at = None
                 self.last_result = None
                 self.last_error = None
+                self.last_metadata_result = None
+                self.last_metadata_at = None
             LOG.info("Folder settings saved: %s -> %s", source, destination)
             self.wake_event.set()
             return selected
@@ -129,6 +146,8 @@ class SyncService:
             if pending_only and not self.sync.pending_ready():
                 return None
             result = self.sync.scan_once(pending_only=pending_only)
+            if not pending_only:
+                self.posters.backfill()
             summary = asdict(result)
             with self.state_lock:
                 self.last_scan_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -144,6 +163,34 @@ class SyncService:
         finally:
             self.scan_lock.release()
 
+    def regenerate_metadata(self) -> dict[str, int] | None:
+        if not self.scan_lock.acquire(blocking=False):
+            return None
+        try:
+            if self.sync is None:
+                return None
+            with self.state_lock:
+                self.regenerating_metadata = True
+            LOG.info("Regenerating metadata in %s", self.sync.data)
+            def report(message):
+                if message.startswith("ERROR "):
+                    LOG.error("%s", message)
+                else:
+                    LOG.info("%s", message)
+            result = regenerate(self.sync.data, self.sync.config, report)
+            with self.state_lock:
+                self.last_metadata_result = result
+                self.last_metadata_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            LOG.info("Metadata regeneration complete: %s", result)
+            return result
+        except Exception:
+            LOG.exception("Metadata regeneration failed")
+            raise
+        finally:
+            with self.state_lock:
+                self.regenerating_metadata = False
+            self.scan_lock.release()
+
     def status(self) -> dict[str, object]:
         with self.state_lock:
             sync = self.sync
@@ -151,6 +198,9 @@ class SyncService:
             last_scan_at = self.last_scan_at
             last_result = self.last_result
             last_error = self.last_error
+            last_metadata_result = self.last_metadata_result
+            last_metadata_at = self.last_metadata_at
+            regenerating_metadata = self.regenerating_metadata
         torrent_files = list_files(sync.torrent) if sync else []
         data_files = list_files(sync.data) if sync else []
         return {
@@ -165,8 +215,31 @@ class SyncService:
             "last_result": last_result,
             "last_error": last_error,
             "scanning": self.scan_lock.locked(),
+            "regenerating_metadata": regenerating_metadata,
+            "last_metadata_result": last_metadata_result,
+            "last_metadata_at": last_metadata_at,
             "logs": self.logs.latest(),
+            "posters": self.posters.status(),
         }
+
+    def request_poster(self, raw: object) -> None:
+        if not isinstance(raw, dict) or not isinstance(raw.get("folder"), str):
+            raise ValueError("Choose a detected GP folder")
+        asset = raw.get("url")
+        if asset == "":
+            asset = None
+        if asset is not None:
+            if not isinstance(asset, str) or len(asset) > 4096:
+                raise ValueError("Poster URL must be text, at most 4096 characters")
+            parsed = urlsplit(asset)
+            if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
+                raise ValueError("Use a public HTTP(S) image URL without credentials")
+        if not self.scan_lock.acquire(blocking=False):
+            raise RuntimeError("A scan or configuration check is running; try again shortly")
+        try:
+            self.posters.submit(raw["folder"], asset, retry=True)
+        finally:
+            self.scan_lock.release()
 
 
 def make_handler(service: SyncService, index_html: bytes) -> type[BaseHTTPRequestHandler]:
@@ -195,13 +268,26 @@ def make_handler(service: SyncService, index_html: bytes) -> type[BaseHTTPReques
 
         def do_POST(self) -> None:
             path = urlsplit(self.path).path
-            if path not in ("/api/sync", "/api/config"):
+            if path not in ("/api/sync", "/api/config", "/api/poster", "/api/metadata"):
                 self.send_json(404, {"error": "Not found"})
                 return
             # Custom headers prevent cross-origin HTML forms from changing state.
-            action = "configure" if path == "/api/config" else "sync"
+            action = {"/api/config": "configure", "/api/poster": "poster", "/api/metadata": "metadata"}.get(path, "sync")
             if self.headers.get("X-FolderSync-Action") != action:
                 self.send_json(403, {"error": "Missing action header"})
+                return
+            if path == "/api/poster":
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    if not 0 < length <= 8192:
+                        raise ValueError("Poster request must contain 1–8192 bytes")
+                    service.request_poster(json.loads(self.rfile.read(length)))
+                except RuntimeError as error:
+                    self.send_json(409, {"error": str(error)})
+                except (ValueError, OSError) as error:
+                    self.send_json(400, {"error": str(error)})
+                else:
+                    self.send_json(202, {"queued": True})
                 return
             if path == "/api/config":
                 try:
@@ -221,12 +307,12 @@ def make_handler(service: SyncService, index_html: bytes) -> type[BaseHTTPReques
                 self.send_json(409, {"error": "Choose source and destination folders first"})
                 return
             try:
-                result = service.scan_now()
+                result = service.regenerate_metadata() if path == "/api/metadata" else service.scan_now()
             except Exception:
-                self.send_json(500, {"error": "Scan failed; see recent logs"})
+                self.send_json(500, {"error": "Operation failed; see recent logs"})
                 return
             if result is None:
-                self.send_json(409, {"error": "A scan is already running"})
+                self.send_json(409, {"error": "A scan or metadata regeneration is already running"})
             else:
                 self.send_json(200, {"result": result})
 
@@ -286,6 +372,7 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        service.posters.close()
         server.server_close()
 
 

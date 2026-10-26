@@ -1,179 +1,37 @@
-# Plex NFO Metadata Generation
-
-## Context
-
-We have a Plex TV library containing Formula 1 recordings.
-
-The video files are already named using Plex's season/episode convention, with a custom 4-digit season number and the episode title embedded in the filename.
-
-Example:
-
-```text
-/data/f1/Season 2616/S2616E01 - Bahrain Qualify.mkv
-```
-
-The filename contains:
-
-- Season: `2616`
-- Episode: `1`
-- Title: `Bahrain Qualify`
-
-Plex correctly identifies the season and episode number, but it does not use the title portion of the filename as the episode title. When online metadata does not provide a matching episode, Plex displays a generic title such as `Episode 1`.
-
-The solution is to use Plex's **Plex NFO Series** metadata agent and generate an `.nfo` file alongside each video.
-
-For the example above:
-
-```text
-/data/f1/Season 2616/S2616E01 - Bahrain Qualify.mkv
-/data/f1/Season 2616/S2616E01 - Bahrain Qualify.nfo
-```
-
-The NFO should contain:
-
-```xml
-<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
-<episodedetails>
-    <title>Bahrain Qualify</title>
-    <season>2616</season>
-    <episode>1</episode>
-</episodedetails>
-```
-
-Plex's NFO agent should then use the NFO as the authoritative episode metadata.
+﻿# Plan: one poster for a GP weekend
 
 ## Goal
+When FolderSync successfully links the first recognized GP video, try to download a suitable poster for the GP and year into its existing Season YYRR destination folder. Accept organizer, team and fan artwork, and allow a manual image URL when discovery cannot find a suitable poster.
 
-Create a tool/script that scans the existing F1 media files and generates the corresponding Plex episode `.nfo` files.
+## Integrated workflow
+- Reuse the full year, round and GP name parsed from the video filename. Do not fetch a calendar or process an entire season.
+- Run discovery and downloads in one background worker so video linking and episode NFO creation continue.
+- Queue once per GP folder, including already linked videos after an upgrade. Save the outcome in poster.json and do not automatically repeat unsuccessful attempts on every scan or restart.
+- Save Plex season artwork as SeasonYYRR.jpg or SeasonYYRR.png inside the matching Season YYRR folder. Preserve JPEG/PNG bytes; retain WebP originals and add a PNG version for Plex. Never overwrite existing artwork.
+- On full scans, prepare legacy saved posters in place without downloading again or changing their originals. Keep poster.json provenance and update its artwork path.
+- Discard queued and in-flight results when the selected destination changes.
 
-**Do not rename, move, modify, or re-encode any media files.**
+## Automatic and manual sources
+- Add an optional posters section to config.json with an enabled flag and official starting-page URLs grouped by GP. Italy and Monza share configuration.
+- Check those public pages and at most five relevant same-site links per starting page. Require event-poster identity for the GP and year. Accept team and driver artwork; reject unrelated, wrong-year and store/product images.
+- Select the first matching standalone poster in page order. Add public gallery fallback after organizer/media-kit lookup, using matching collection titles and the first image that passes validation. Bound gallery traversal to four pages and eight image candidates per starting URL, supporting lazy-loaded CDN images.
+- Add GP poster status and controls to the existing web interface. An empty URL retries discovery; a direct public image URL downloads the user's selected image.
+- Use POST /api/poster with the existing action-header convention and expose results through /api/status. Accept only GP folders detected by the sync workflow.
+- Allow a per-GP official media-kit cover fallback, explicitly enabled for Azerbaijan. Extract the dominant embedded portrait image from the first PDF page without rendering or recompressing it. Verify the source GP/year and linked public Drive file year. Manual media-kit PDF URLs are also supported.
+- No API key, Reddit integration, season registry, separate scheduler or historical collection.
 
-The only files that should be created or modified are `.nfo` metadata files.
+## Validation and persistence
+- Bound requests to a 10-second timeout and 20 MB, with one transient retry. Validate and pin public network addresses, including redirects.
+- Use Pillow to verify and decode supported image content. Require portrait orientation, at least 600 pixels in width, and at most 20 million pixels.
+- Download to a temporary file and publish atomically without overwriting. Keep original bytes.
+- Store race identity, status, source page, asset URL, check time, filename and failure reason in one folder-local poster.json sidecar.
+- Preserve poster failures separately from video scan errors; allow manual recovery.
 
-## Filename Parsing
+## Acceptance and packaging
+- Cover discovery identity checks, ambiguity, download validation, duplicate requests, persistent outcomes, manual retry, destination changes, existing artwork and blocked/private URLs with mocked HTTP tests.
+- Cover both automatic post-link triggering and the manual web API, including stability waiting and non-blocking media syncing.
+- Run the existing tests and new tests. Smoke-test an official live source and report whether it provides a usable downloadable image; do not claim guaranteed coverage.
+- Include the new module, Pillow and pypdf in Docker and document source configuration and manual fallback.
 
-The parser should recognize filenames following this general pattern:
-
-```text
-S<season>E<episode> - <title>.mkv
-```
-
-Example:
-
-```text
-S2616E01 - Bahrain Qualify.mkv
-```
-
-should produce:
-
-```text
-season = 2616
-episode = 1
-title = Bahrain Qualify
-```
-
-The parser must support four-digit season numbers.
-
-The title should be extracted from the portion after the ` - ` separator and before the file extension.
-
-## NFO Generation
-
-For every valid media file, generate an NFO with the same basename:
-
-```text
-S2616E01 - Bahrain Qualify.mkv
-S2616E01 - Bahrain Qualify.nfo
-```
-
-The generated XML should contain:
-
-```xml
-<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
-<episodedetails>
-    <title>Bahrain Qualify</title>
-    <season>2616</season>
-    <episode>1</episode>
-</episodedetails>
-```
-
-Ensure XML is properly escaped if an episode title contains characters such as:
-
-```text
-&
-<
->
-"
-'
-```
-
-## Safety Requirements
-
-- Never modify media files.
-- Never rename media files.
-- Never delete files.
-- Do not overwrite an existing `.nfo` by default.
-- Provide a dry-run mode showing what would be generated.
-- Report files that do not match the expected naming pattern.
-- Handle existing NFO files safely.
-- Make the operation idempotent: running the tool multiple times should not create duplicate files or produce different results.
-
-## Suggested Workflow
-
-1. Recursively scan the configured media directory.
-2. Find supported video files, primarily `.mkv`.
-3. Parse the filename using the `S<season>E<episode> - <title>` convention.
-4. Extract season, episode, and title.
-5. Determine the NFO path from the media filename.
-6. Generate the Plex-compatible `<episodedetails>` XML.
-7. In dry-run mode, show the proposed changes without writing anything.
-8. When writing is enabled, create the NFO if it does not already exist.
-9. Produce a summary containing:
-   - number of media files scanned
-   - number successfully parsed
-   - number of NFOs created
-   - number skipped because an NFO already exists
-   - number of files that could not be parsed
-
-## Example
-
-Input:
-
-```text
-/data/f1/Season 2616/S2616E01 - Bahrain Qualify.mkv
-/data/f1/Season 2616/S2616E02 - Bahrain Race.mkv
-```
-
-Expected output:
-
-```text
-/data/f1/Season 2616/S2616E01 - Bahrain Qualify.nfo
-/data/f1/Season 2616/S2616E02 - Bahrain Race.nfo
-```
-
-First NFO:
-
-```xml
-<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
-<episodedetails>
-    <title>Bahrain Qualify</title>
-    <season>2616</season>
-    <episode>1</episode>
-</episodedetails>
-```
-
-Second NFO:
-
-```xml
-<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
-<episodedetails>
-    <title>Bahrain Race</title>
-    <season>2616</season>
-    <episode>2</episode>
-</episodedetails>
-```
-
-## Deliverable
-
-Implement the scanner/NFO generator with a simple CLI suitable for running against `/data/f1`.
-
-The implementation should prioritize correctness, safe file handling, clear logging, and idempotency over unnecessary complexity.
+## Defaults and limits
+Automatic lookup is enabled. Starter organizer domains cover Australia, Italy, the Netherlands, Great Britain, Miami, Singapore and Azerbaijan. Azerbaijan also has a configured media-kit cover fallback. Shared Salracing galleries provide organizer, team and fan artwork for other GPs without requiring individual source entries. Live post-link checks cover all three sample GPs: Azerbaijan, Bahrain and Singapore. Discovery does not render JavaScript or bypass access restrictions, so not found is a valid result.

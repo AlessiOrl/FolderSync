@@ -5,7 +5,7 @@ import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from nfo import main, scan
+from nfo import episode_xml, main, scan
 
 
 class NfoTests(unittest.TestCase):
@@ -45,19 +45,22 @@ class NfoTests(unittest.TestCase):
         self.assertEqual(nfo.read_bytes(), original_nfo)
 
     def test_escaping_other_extensions_and_unparsed_names(self):
-        video = self.season / 'S2616E02 - Tom & "Jerry" <Race> \'Final\'.MP4'
+        title = 'Tom & "Jerry" <Race> \'Final\''
+        # Exercise XML escaping directly, including characters Windows forbids in paths.
+        xml = episode_xml(2616, 2, title)
+        video = self.season / "S2616E02 - Tom & Jerry Race Final.MP4"
         video.write_bytes(b"video")
         (self.season / "unknown.mkv").write_bytes(b"other")
         summary = scan(self.root, write=True)
 
         self.assertEqual((summary.scanned, summary.parsed, summary.unparsed, summary.created),
                          (2, 1, 1, 1))
-        xml = video.with_suffix(".nfo").read_text()
         self.assertIn("&amp;", xml)
         self.assertIn("&lt;Race&gt;", xml)
         self.assertIn("&quot;Jerry&quot;", xml)
         self.assertIn("&apos;Final&apos;", xml)
-        self.assertEqual(ET.fromstring(xml).findtext("title"), 'Tom & "Jerry" <Race> \'Final\'')
+        self.assertEqual(ET.fromstring(xml).findtext("title"), title)
+        self.assertEqual(ET.parse(video.with_suffix(".nfo")).getroot().findtext("title"), "Tom & Jerry Race Final")
         self.assertFalse((self.season / "unknown.nfo").exists())
 
     def test_existing_nfo_is_not_overwritten(self):

@@ -84,6 +84,12 @@
         <div id="setup-message" class="status" role="status" aria-live="polite">Save your folders to enable scanning.</div>
       </form>
     </section>
+    <section class="panel setup" aria-labelledby="metadata-title">
+      <h2 id="metadata-title">Folder metadata</h2>
+      <p>Rebuild show, GP season and episode metadata throughout the selected destination. Original source videos are not required. Custom metadata and existing posters are kept. Afterwards, refresh the show's metadata in Plex.</p>
+      <button id="metadata-button" type="button" disabled>Regenerate metadata</button>
+      <div id="metadata-message" class="status" role="status" aria-live="polite"></div>
+    </section>
     <div class="grid">
       <section class="panel" aria-label="Torrent files">
         <div class="panel-head"><h2>Torrent <span id="torrent-count" class="count"></span></h2><p id="torrent-path"></p></div>
@@ -94,6 +100,12 @@
         <div id="data-files" class="file-list"></div>
       </section>
     </div>
+    <section class="panel setup logs" aria-labelledby="posters-title">
+      <h2 id="posters-title">GP posters</h2>
+      <p>Season metadata is created first, then GP poster lookup checks organizer pages, media kits and public galleries, including team and fan artwork. The video hardlink waits for the poster for up to one minute, then proceeds even if no poster is available. The first suitable poster for the GP and year is saved as SeasonYYRR.jpg or .png inside the GP folder for Plex. Enable Use local assets in Plex and refresh metadata. Retry lookup or paste an image or media-kit PDF URL if needed. Existing posters are kept.</p>
+      <div id="posters-list"><p>No GP folders detected yet.</p></div>
+      <div id="poster-message" class="status" role="status" aria-live="polite"></div>
+    </section>
     <section class="panel logs" aria-label="Recent logs">
       <div class="panel-head"><h2>Recent logs</h2></div>
       <pre id="logs">Loading…</pre>
@@ -101,6 +113,10 @@
   </main>
   <script>
     const button = document.getElementById('sync-button');
+    const metadataButton = document.getElementById('metadata-button');
+    const metadataMessage = document.getElementById('metadata-message');
+    let metadataRunning = false;
+    let metadataFailure = null;
     const status = document.getElementById('status');
     let requestRunning = false;
     let setupRunning = false;
@@ -117,6 +133,63 @@
       }
     }
     form.addEventListener('input', updatePreviews);
+
+    const posterRows = new Map();
+    function renderPosters(posters) {
+      const container = document.getElementById('posters-list');
+      const keys = new Set(posters.map(poster => poster.folder));
+      for (const [key, row] of posterRows) {
+        if (!keys.has(key)) { row.element.remove(); posterRows.delete(key); }
+      }
+      if (!posters.length) {
+        container.textContent = 'No GP folders detected yet.';
+        return;
+      }
+      if (!posterRows.size) container.textContent = '';
+      for (const poster of posters) {
+        let row = posterRows.get(poster.folder);
+        if (!row) {
+          const element = document.createElement('form');
+          const title = document.createElement('h3');
+          const state = document.createElement('p');
+          const label = document.createElement('label');
+          label.textContent = 'Poster image or media-kit PDF URL (optional)';
+          const input = document.createElement('input');
+          input.type = 'url'; input.placeholder = 'https://…/poster.jpg'; input.maxLength = 4096;
+          label.append(input);
+          const retry = document.createElement('button');
+          retry.type = 'submit'; retry.textContent = 'Retry lookup / download URL';
+          element.append(title, state, label, retry);
+          row = {element, title, state, input, retry, busy: false};
+          const current = row;
+          element.addEventListener('submit', async event => {
+            event.preventDefault();
+            current.busy = true; current.retry.disabled = true;
+            const message = document.getElementById('poster-message');
+            try {
+              const response = await fetch('/api/poster', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json', 'X-FolderSync-Action': 'poster'},
+                body: JSON.stringify({folder: poster.folder, url: current.input.value.trim()})
+              });
+              const data = await response.json();
+              if (!response.ok) throw new Error(data.error || 'Poster request failed');
+              message.textContent = 'Poster request queued.'; message.className = 'status';
+              current.input.value = '';
+            } catch (error) {
+              message.textContent = error.message; message.className = 'status error';
+            } finally {
+              current.busy = false;
+              await refresh();
+            }
+          });
+          posterRows.set(poster.folder, row); container.append(element);
+        }
+        row.title.textContent = `${poster.year} ${poster.grand_prix} · ${poster.folder}`;
+        row.state.textContent = `${poster.status.replaceAll('_', ' ')}${poster.reason ? ': ' + poster.reason : ''}`;
+        row.retry.disabled = row.busy || ['queued', 'downloading', 'downloaded', 'existing'].includes(poster.status);
+      }
+    }
 
     function fileSize(bytes) {
       if (bytes < 1024) return `${bytes} B`;
@@ -259,6 +332,7 @@
         document.getElementById('data-path').textContent = data.data_path;
         renderFiles('torrent', data.torrent_files);
         renderFiles('data', data.data_files);
+        renderPosters(data.posters || []);
         document.getElementById('logs').textContent = data.logs.length ? data.logs.join('\n') : 'No logs yet';
         dataRoot = data.data_root || '/app/data';
         document.getElementById('data-root').textContent = dataRoot;
@@ -269,13 +343,28 @@
           setupLoaded = true;
           updatePreviews();
         }
-        button.disabled = requestRunning || setupRunning || data.scanning || !data.configured;
-        saveButton.disabled = setupRunning || data.scanning;
+        button.disabled = requestRunning || metadataRunning || setupRunning || data.scanning || !data.configured;
+        metadataButton.disabled = requestRunning || metadataRunning || setupRunning || data.scanning || !data.configured;
+        saveButton.disabled = setupRunning || requestRunning || metadataRunning || data.scanning;
+        if (metadataRunning || data.regenerating_metadata) {
+          metadataMessage.className = 'status';
+          metadataMessage.textContent = 'Regenerating metadata...';
+        } else if (metadataFailure) {
+          metadataMessage.className = 'status error';
+          metadataMessage.textContent = metadataFailure;
+        } else if (data.last_metadata_at) {
+          const result = data.last_metadata_result || {};
+          metadataMessage.className = result.errors ? 'status error' : 'status';
+          metadataMessage.textContent = `Last regeneration: ${new Date(data.last_metadata_at).toLocaleString()} · ${result.created ?? 0} created · ${result.updated ?? 0} updated · ${result.unchanged ?? 0} unchanged · ${result.preserved ?? 0} custom files preserved · ${result.unparsed ?? 0} unparsed videos · ${result.errors ?? 0} errors. Refresh metadata in Plex to import the changes.`;
+        }
         if (data.last_error) {
           status.textContent = `Last scan encountered an error: ${data.last_error}`;
           status.className = 'status error';
         } else if (!data.configured) {
           status.textContent = 'Setup required · choose your folders below';
+          status.className = 'status';
+        } else if (data.regenerating_metadata) {
+          status.textContent = 'Regenerating metadata...';
           status.className = 'status';
         } else if (data.scanning) {
           status.textContent = 'Scanning…';
@@ -294,11 +383,36 @@
       }
     }
 
+    metadataButton.addEventListener('click', async () => {
+      metadataRunning = true;
+      metadataFailure = null;
+      metadataButton.disabled = true;
+      button.disabled = true;
+      saveButton.disabled = true;
+      metadataMessage.className = 'status';
+      metadataMessage.textContent = 'Regenerating metadata...';
+      try {
+        const response = await fetch('/api/metadata', {
+          method: 'POST', headers: {'X-FolderSync-Action': 'metadata'}
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || `Regeneration failed (${response.status})`);
+      } catch (error) {
+        metadataFailure = error.message;
+        metadataMessage.textContent = error.message;
+        metadataMessage.className = 'status error';
+      } finally {
+        metadataRunning = false;
+        await refresh();
+      }
+    });
+
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       setupRunning = true;
       saveButton.disabled = true;
       button.disabled = true;
+      metadataButton.disabled = true;
       setupMessage.className = 'status';
       setupMessage.textContent = 'Checking folders and hard-link support…';
       try {
@@ -326,6 +440,8 @@
     button.addEventListener('click', async () => {
       requestRunning = true;
       button.disabled = true;
+      metadataButton.disabled = true;
+      saveButton.disabled = true;
       status.textContent = 'Scanning…';
       status.className = 'status';
       try {

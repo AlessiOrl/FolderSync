@@ -62,7 +62,48 @@ FolderSync saves source-to-destination matches in `data/.foldersync-links.json` 
 
 ## Generate Plex episode NFO files
 
-FolderSync automatically creates a Plex episode `.nfo` beside every destination video named `S<season>E<episode> - <title>`. The metadata contains the filename title, season, and episode number. This happens as part of normal scans after a video is linked, and full scans also fill in missing NFOs for videos already in the destination. Existing NFO files are never overwritten. Unmatched destination video names are counted in the scan result, and NFO errors appear in the logs and status page.
+For recognized F1 videos, FolderSync prepares episode NFOs, `tvshow.nfo` and `season.nfo` **before creating the video hard link**. Episodes include readable titles, descriptions and the calendar year. The show includes Sports/Motorsport genres, an expanded series synopsis and a custom season name such as `2026 Azerbaijan Grand Prix`, using Plex's supported `namedseason` tag. Episode air dates are included only when explicitly configured. Preparation errors prevent publishing a new video and are retried on subsequent scans. FolderSync updates its own marked metadata; user-authored NFOs remain untouched.
+
+The show year is the lowest year decoded from known `YYRR` season codes, including recorded `namedseason` entries and existing `Season YYRR` folders with matching episode files. Empty folders and legacy calendar-year folders without matching YYRR episodes do not supply a year. For example, `2515` and `2615` give the show year 2025. Adding an older GP lowers that year; processing a newer GP does not raise it. Plex has one series year, while individual GP seasons retain their own year in their names. FolderSync writes both `year` and Plex's supported `premiered` date to `tvshow.nfo`, using January 1 of that lowest year as a **collection date convention**, not an actual premiere or session date. Full scans also refresh marked show NFOs when their source videos are no longer present. Recorded season names remain part of the collection history even if their folders are removed.
+
+After rebuilding and replacing the container, run **Sync now**, then **Refresh Metadata** on the Formula 1 show in Plex using the Plex NFO Series agent. Tautulli's existing show template `<b>{title}</b> ({year})` can then use the imported show year, and `{summary}` can show the expanded synopsis. FolderSync does not refresh Plex or resend past notifications itself.
+
+Other destination videos named `S<season>E<episode> - <title>` receive basic missing NFOs during full scans. These contain title, season and episode number. Full scans also backfill basic missing NFOs for existing videos. Existing unmarked NFOs are preserved.
+
+Use **Regenerate metadata** in the **Folder metadata** panel to rebuild metadata throughout the selected destination without needing the original source videos. Recognized F1 episode filenames supply the GP, session and YYRR code, allowing regeneration of episode, season and show NFOs and the lowest show year. Other conventionally named episodes receive basic metadata. The action replaces FolderSync-marked NFOs, repairs malformed marked NFOs, and upgrades episode NFOs that exactly match the older basic CLI output. Other unmarked custom NFOs and symlinks remain untouched. Existing posters and videos are preserved; the action does not link videos or download posters. The page and logs report created, updated, unchanged, preserved and unparsed files plus errors. Individual failures do not stop other folders. Refresh metadata on the show in Plex afterwards to import the changes. Regeneration shares the scan/configuration lock, so simultaneous requests return a busy response.
+
+Use the **Plex NFO agent** (Plex Media Server 1.43.1 or newer) for this metadata. Plex mostly ignores `season.nfo`; custom GP names are therefore also stored in `tvshow.nfo`. See [Plex's NFO documentation](https://support.plex.tv/articles/using-nfo-metadata-files-with-plex/). Tautulli reads the metadata Plex imports, so creating files cannot by itself guarantee a particular notification format.
+
+### Customize F1 metadata and artwork
+
+The `metadata` section in `config.json` supports show title, description and genres, optional show `poster` and `background`, and event overrides keyed by YYRR. Artwork paths refer to existing JPEG/PNG files **relative to the selected Formula 1 show folder**, for example `artwork/f1-background.jpg`. Files must remain inside that folder. FolderSync validates and copies them to Plex's local asset names before linking a video, preserving existing artwork. A background is show-level; it is not automatically discovered or made by stretching a GP poster.
+
+For example, customize a GP without changing the video naming:
+
+```json
+"metadata": {
+  "title": "Formula 1",
+  "description": "Formula 1 Grand Prix coverage.",
+  "genres": ["Sports", "Motorsport"],
+  "poster": "artwork/f1-poster.jpg",
+  "background": "artwork/f1-background.jpg",
+  "events": {
+    "2615": {
+      "name": "2026 Azerbaijan Grand Prix",
+      "description": "Formula 1 weekend in Baku.",
+      "poster": "artwork/baku-2026.png",
+      "sessions": {
+        "Race": {
+          "title": "Azerbaijan Grand Prix — Race",
+          "description": "Race coverage from Baku."
+        }
+      }
+    }
+  }
+}
+```
+
+Add a session `date` in `YYYY-MM-DD` format when known; it must belong to the event's year. Session keys use the normalized names, such as `Race`, `Qualify`, `Practice 1` or `Sprint Qualifying`. A bare year is stored in the episode NFO, but Plex's documented episode date field is `aired`: configure the actual session date to populate that field. Rebuild and replace the container after configuration changes.
 
 The standalone CLI remains available to preview NFO creation or run it manually against another media directory:
 
@@ -72,6 +113,65 @@ python3 nfo.py /data/f1 --write
 ```
 
 For the Docker setup above, the destination path is `/app/data/destination` inside the container. Rebuild and replace the container to enable automatic metadata creation.
+
+## Download a GP poster
+
+When a recognized GP video is first detected, FolderSync creates the show and season NFO files, prepares configured artwork, and queues one background poster lookup for its `Season YYRR` folder during the file stability wait. Videos remain pending until a season poster is saved or 60 seconds have elapsed since the season's first detection. Sessions in the same season share this deadline; rescans do not restart it. Episode NFO files are written before their video hardlinks. The full year and GP name come from the source filename. Saved lookup outcomes survive restarts. Other GPs and non-F1 videos can continue syncing.
+
+If a poster is missing, failed or still downloading at the 60-second deadline, videos link anyway once the source file passes its stability check. Poster lookup continues in the background. With automatic lookup disabled, videos do not wait for artwork unless `posters.require_before_link` is `true`; that option also has the same one-minute limit. The GP posters section shows the lookup outcome. Configured custom GP artwork is prepared before lookup and takes priority.
+
+The **GP posters** section shows each detected folder's result. Use **Retry lookup / download URL** with an empty URL to repeat discovery, or paste a public direct JPEG, PNG, WebP, or media-kit PDF URL to download your selected artwork. Public Google Drive file links also work. This manual option also works when automatic lookup is disabled. A missing, ambiguous, blocked, or invalid poster is reported separately from video scan errors.
+
+Artwork uses Plex's season-poster naming inside the matching GP folder: `Season2615.jpg` or `Season2615.png` for the videos numbered `S2615E…` in `Season 2615`. JPEG and PNG downloads keep their original bytes. WebP downloads retain the original `poster.webp` and add a PNG version for Plex, without changing image dimensions. The image must be portrait and at least 600 pixels wide; responses are limited to 20 MB and images to 20 million pixels. `poster.json` records the GP, year, source page, asset URL, attempt time, and actual artwork filename. Existing artwork is never overwritten. If a saved poster is removed, retry manually to restore it.
+
+On Unraid, place the GP folders inside the Formula 1 show folder already scanned by your Plex TV library:
+
+```text
+Formula 1/
+  Season 2615/
+    S2615E01 - Azerbaijan Qualify.mkv
+    S2615E01 - Azerbaijan Qualify.nfo
+    S2615E02 - Azerbaijan Race.mkv
+    Season2615.jpg
+    poster.json
+```
+
+The artwork number matches the full `YYRR` season code, not just the calendar year or round. Plex recognizes artwork naming; Unraid supplies the storage. In the Plex TV library's advanced settings, enable **Use local assets**, then refresh the Formula 1 show's metadata. Legacy agents require **Local Media Assets** enabled and ordered first. See [Plex's local TV artwork documentation](https://support.plex.tv/articles/200220717-local-media-assets-tv-shows/). FolderSync does not change Plex settings or force a selected poster to refresh.
+
+After upgrading, full scans also prepare saved posters whose source videos are no longer present. A valid legacy `poster.jpg`, `poster.jpeg`, `poster.png`, or `poster.webp` with `poster.json` gets a correctly named season artwork file in the same folder without another download. Legacy originals remain in place, provenance is retained, and existing `SeasonYYRR.*` artwork takes priority. A source video observed during syncing can also trigger preparation without a sidecar.
+
+Configure automatic lookup in the image's `config.json`:
+
+```json
+"posters": {
+  "enabled": true,
+  "sources": {
+    "Italy": ["https://www.monzanet.it/"],
+    "Great Britain": ["https://www.silverstone.co.uk/events/formula-1-british-grand-prix/formula-1-press"]
+  },
+  "media_kits": {
+    "Azerbaijan": ["https://www.bakucitycircuit.com/media-kit"]
+  }
+}
+```
+
+Source entries can be GP/organizer or team pages. Prefer a specific public poster announcement over a homepage. Italy and Monza share configuration. Each GP can have up to five starting URLs; lookup visits each starting page and at most five relevant same-site poster links. Candidates must identify poster artwork for the GP and year. Team and driver artwork is accepted; store/product images are excluded. Multiple standalone matches use the first candidate in page order.
+
+The bundled configuration also checks public Salracing galleries after organizer pages and media-kit lookup have no match. These collections include team, official and fan artwork. Add a `galleries` mapping to configure other poster collections; `"*"` applies to every GP:
+
+```json
+"galleries": {
+  "*": ["https://www.salracing.com/story", "https://www.salracing.com/story/category/Posters"]
+}
+```
+
+Gallery lookup follows matching GP/year poster links on the same site, checking at most four pages and eight image candidates per starting URL. A collection's title must identify the requested GP and year. The first valid portrait image is selected in page order; unavailable, corrupt, landscape or small images are skipped. Lazy-loaded images and public image CDNs are supported, and `poster.json` retains the collection and image URLs. No search API key is needed. Homepages may not expose posters, sites may block automated requests, and JavaScript-only pages are not rendered, so an automatic match is not guaranteed. Set `"galleries": {}` to disable this fallback. Existing failed outcomes require **Retry lookup / download URL** after upgrading.
+
+The optional `media_kits` mapping enables an official cover fallback for listed GPs only, after no standalone poster is found. Azerbaijan's public organizer page links a 2026 PDF containing the 1878 × 2658 GP promotional artwork on its cover; this source has been tested live. The downloader checks the GP/year on the official page and the year of linked public Drive media-kit files. It extracts the dominant embedded portrait image from the PDF's first page, preserving its original bytes, and records `asset_kind: "media_kit_cover"`. It does not render PDFs, guess between competing cover images, use encrypted documents, or bypass private Drive files. PDFs are limited to 200 pages. Remove a GP's `media_kits` entry to disable its automatic cover fallback. Existing failed `poster.json` outcomes still require **Retry lookup / download URL** after upgrading.
+
+Set `"enabled": false` to disable automatic lookup. Rebuild and replace the container after changing source configuration. Failed lookups are not retried every scan; use the web control when ready. Public URLs and redirects are checked against private/local addresses. Use publicly provided artwork and retain its source information.
+
+For local Python runs, install `requirements.txt` first. Docker installs Pillow and pypdf automatically. The opt-in `python tests/live_poster_check.py` checks real post-link discovery against every GP video in `tests/test_folder`, using temporary hard links rather than copying their contents, and leaves the fixtures unchanged.
 
 ## Replace an existing container
 
