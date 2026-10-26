@@ -12,6 +12,9 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 
 
+from permissions import apply_permissions
+
+
 VIDEO_EXTENSIONS = frozenset({".mkv", ".mp4", ".avi", ".mov"})
 EPISODE_NAME = re.compile(r"^S(?P<season>[0-9]+)E(?P<episode>[0-9]+) - (?P<title>.+)$", re.I)
 
@@ -67,6 +70,8 @@ def ensure_nfo(video: Path) -> str:
         # Exclusive creation protects metadata written by another process.
         with nfo.open("x", encoding="utf-8", newline="\n") as output:
             output.write(episode_xml(*parsed))
+            output.flush()
+            apply_permissions(nfo)
     except FileExistsError:
         return "existing"
     return "created"

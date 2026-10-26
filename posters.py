@@ -19,6 +19,8 @@ from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
+from permissions import apply_permissions
+
 from PIL import Image
 from pypdf import PdfReader
 
@@ -350,6 +352,7 @@ def atomic_json(path, value):
             temporary.unlink(missing_ok=True)
             raise
     try:
+        apply_permissions(temporary)
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
@@ -380,6 +383,7 @@ def publish_image(directory, name, content):
             temporary.unlink(missing_ok=True)
             raise
     try:
+        apply_permissions(temporary)
         try:
             os.link(temporary, directory / name)
             return True

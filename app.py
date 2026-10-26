@@ -15,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from permissions import policy
 from settings import DirectorySettings
 from posters import PosterWorker
 from metadata import regenerate
@@ -346,6 +347,7 @@ def main() -> None:
     logs = RecentLogs()
     logging.getLogger().addHandler(logs)
     try:
+        policy()
         config = load_config(CONFIG_FILE)
         settings = DirectorySettings(Path("/app/data"))
         interval = int(os.environ.get("SCAN_INTERVAL_SECONDS", "120"))

@@ -15,6 +15,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable
 
+from permissions import apply_permissions, repair_tree, policy
 from nfo import ensure_nfo, scan as scan_nfo
 from metadata import prepare as prepare_metadata, prepare_season, refresh_generated_shows, validate_config as validate_metadata
 
@@ -265,6 +266,7 @@ class LinkSync:
         clock: Callable[[], float] = time.monotonic,
         registry_path: Path | None = None,
     ):
+        repair_tree(data)
         self.data = data
         self.torrent = torrent
         self.config = config
@@ -316,6 +318,7 @@ class LinkSync:
                 file.write("\n")
                 file.flush()
                 os.fsync(file.fileno())
+            apply_permissions(temporary)
             os.replace(temporary, self.registry_path)
         finally:
             if temporary is not None:
@@ -482,6 +485,9 @@ class LinkSync:
                 return None
             directory.mkdir(parents=True, exist_ok=True)
             directory = candidate.resolve(strict=True)
+            for parent in reversed((directory, *directory.parents)):
+                if parent.is_relative_to(self.data):
+                    apply_permissions(parent)
         except (OSError, RuntimeError) as error:
             self.last_error = (
                 f"Cannot resolve destination folder {str(candidate)!r}: "
@@ -526,6 +532,7 @@ class LinkSync:
                 current = source.lstat()
                 if (current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns) != signature:
                     return "pending"
+            apply_permissions(source)
             os.link(source, destination, follow_symlinks=False)
             LOG.info("Linked %s -> %s", source, destination)
             return "linked"
@@ -740,6 +747,7 @@ class LinkSync:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
+        policy()
         config = load_config(CONFIG_FILE)
         data, torrent = load_directories()
         interval = int(os.environ.get("SCAN_INTERVAL_SECONDS", "120"))

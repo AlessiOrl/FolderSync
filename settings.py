@@ -8,6 +8,7 @@ import os
 import tempfile
 from pathlib import Path
 
+from permissions import apply_permissions
 from sync import load_directories, relative_path
 
 
@@ -54,6 +55,7 @@ class DirectorySettings:
                 temporary.unlink(missing_ok=True)
                 raise
         try:
+            apply_permissions(temporary)
             os.replace(temporary, self.path)
         finally:
             temporary.unlink(missing_ok=True)
