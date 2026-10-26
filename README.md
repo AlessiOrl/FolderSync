@@ -4,7 +4,7 @@ FolderSync scans a source folder and creates hard links to matching video files 
 
 ## Configure matching rules
 
-Edit `config.json` before building the image. The app reads it at `/app/config.json` inside the container:
+The app reads `config.json` at `/app/config.json` inside the container. Mount your host file there, along with `/app/defaults`, to edit Formula 1 naming while the app is running:
 
 ```json
 {
@@ -28,7 +28,7 @@ docker build -t foldersync .
 From Windows PowerShell or Command Prompt, mount the shared `data` parent **once**:
 
 ```text
-docker run -d --name foldersync --restart unless-stopped -p 127.0.0.1:8082:8080 -v "H:\Data\Progetti_Info\FolderSync\data:/app/data" -e SCAN_INTERVAL_SECONDS=120 -e STABLE_SECONDS=10 foldersync
+docker run -d --name foldersync --restart unless-stopped -p 127.0.0.1:8082:8080 -v "H:\Data\Progetti_Info\FolderSync\data:/app/data" -v "H:\Data\Progetti_Info\FolderSync\config.json:/app/config.json:ro" -v "H:\Data\Progetti_Info\FolderSync\defaults:/app/defaults:ro" -e SCAN_INTERVAL_SECONDS=120 -e STABLE_SECONDS=10 foldersync
 ```
 
 Use your actual host path. On Linux or WSL, replace the Windows path with `/mnt/h/Data/Progetti_Info/FolderSync/data` or the appropriate Linux path.
@@ -42,7 +42,7 @@ Use your actual host path. On Linux or WSL, replace the Windows path with `/mnt/
 
 Paths are relative to `/app/data`. Both folders must already exist, remain inside that mount, and must not overlap. The mount and selected folders must be writable for the compatibility check. Settings are saved atomically to `data/.foldersync.json` on the host and restored after container recreation. You can change the selection from the same form; if a scan is active, save again after it finishes. Invalid changes keep the previous settings. Existing linked media are left in place when you change folders.
 
-Scans stay disabled until setup is complete. `SCAN_INTERVAL_SECONDS` controls full scans (default `120`, or 2 minutes). `STABLE_SECONDS` controls the pending wait (default `10` seconds). Pending files are checked separately after that wait and linked if unchanged; a detected change restarts the wait. New files are discovered on the next full scan or when you click **Sync now**. Both settings must be positive integers. Matching rules still come from the image's `config.json`.
+Scans stay disabled until setup is complete. `SCAN_INTERVAL_SECONDS` controls full scans (default `120`, or 2 minutes). `STABLE_SECONDS` controls the pending wait (default `10` seconds). Pending files are checked separately after that wait and linked if unchanged; a detected change restarts the wait. New files are discovered on the next full scan or when you click **Sync now**. Both settings must be positive integers. Matching rules come from `/app/config.json`; changes to rules, posters, metadata, or extensions require an app restart. Formula 1 naming changes take effect on the next scan.
 
 ## Formula 1 destination names
 
@@ -55,9 +55,29 @@ Season 2601/
   S2601E03 - Monza Qualify.mp4
 ```
 
-The race and session remain explicit in every filename. Episode numbers follow linking order, which may differ from session order when files arrive later. The original extension and its letter case are preserved. The `formula1` section of `config.json` lists recognized Grand Prix names and event aliases; add new ones there and rebuild the image to apply changes. If a Formula 1 filename cannot be parsed, the scan logs the reason and links it under its original name in the rule destination. Other videos also retain their original names.
+The race and session remain explicit in every filename. Episode numbers follow linking order, which may differ from session order when files arrive later. The original extension and its letter case are preserved. The files `defaults/grand_prix.json` and `defaults/events.json` supply recognized Grand Prix names and event aliases. The `formula1` section of `config.json` can override either list and contains the Grand Prix aliases. If a Formula 1 filename cannot be parsed, the scan logs the reason and links it under its original name in the rule destination. Other videos also retain their original names.
 
-Built-in Grand Prix aliases in `sync.py` also recognize country variants and venue names, including `UK`/`Silverstone` → `Great Britain`, `Imola` → `Emilia-Romagna`, `Baku` → `Azerbaijan`, `USA.COTA`/`Austin` → `United States`, `Brazil`/`Sao.Paulo`/`Interlagos` → `São Paulo`, `Losail`/`Lusail` → `Qatar`, and `Yas.Marina` → `Abu Dhabi`. Matching ignores case and accepts dots, spaces, underscores, or hyphens. Compound names such as `USA.Miami` and `USA.Las.Vegas` resolve to their respective events. Aliases apply only when their canonical Grand Prix is enabled in `formula1.grand_prix`; explicit configured names take precedence over aliases of the same length.
+Formula 1 naming defaults are stored as JSON data:
+
+- `defaults/grand_prix.json`: an array of canonical GP names, such as `["Australia", "United States"]`.
+- `defaults/events.json`: an object mapping event aliases to output names, such as `{"Qualifying": "Qualify", "Race": "Race"}`.
+- `config.json` → `formula1.grand_prix_aliases`: an object grouping venue and country aliases by canonical GP name.
+
+To override the GP or event defaults for a deployment, add `formula1.grand_prix` or `formula1.events` in `config.json`. Each override replaces its entire default list or map. Omit the key to use the corresponding file in `defaults/`. GP lists and event maps must be nonempty.
+
+Grand Prix aliases are editable defaults under `formula1.grand_prix_aliases` in `config.json`, grouped by the canonical GP name. For example:
+
+```json
+"grand_prix_aliases": {
+  "United States": ["USA.COTA", "USA", "COTA", "Austin"],
+  "Great Britain": ["UK", "Silverstone"],
+  "São Paulo": ["Brazil", "Sao.Paulo", "Interlagos"]
+}
+```
+
+The shipped file includes aliases for the other supported venues. Matching ignores case and accepts dots, spaces, underscores, or hyphens. Compound names such as `USA.Miami` and `USA.Las.Vegas` resolve to their respective events. Aliases apply only when their canonical Grand Prix is enabled in `formula1.grand_prix`; explicit configured names take precedence over aliases of the same length.
+
+Save changes to the mounted `config.json`, then click **Sync now** or wait for the next scan. The app reloads the GP list, event map, and GP aliases before every full or pending scan without a restart or rebuild, including changes to the mounted `defaults/` files. Invalid or temporarily unreadable files produce a warning and retain the entire last valid naming configuration; the next valid edit is picked up automatically. Set a GP's alias list to `[]` to disable its aliases, or set `grand_prix_aliases` to `{}` to disable all aliases. Omitting the section also means no aliases. Other configuration sections require a restart.
 
 FolderSync saves source-to-destination matches in `data/.foldersync-links.json` and reuses episode numbers after restarts. Keep this file with the shared data mount. If a saved destination contains a different file, FolderSync reports a conflict and leaves it untouched. On the first completed scan after an upgrade and the stability wait, existing hard links under an older year folder are moved to the matching round folder when safe. Episode files already named without the `S` prefix are renamed in place and keep their episode number. Source files and media content are never renamed or copied. Existing destination files are never overwritten.
 

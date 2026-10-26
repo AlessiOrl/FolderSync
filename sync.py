@@ -11,7 +11,7 @@ import re
 import stat
 import tempfile
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable
 
@@ -24,70 +24,41 @@ DEFAULT_EXTENSIONS = (".mp4", ".mkv", ".avi", ".mov")
 CONFIG_FILE = Path(__file__).with_name("config.json")
 SOURCE_ROOT = Path("/app/media/src")
 DESTINATION_ROOT = Path("/app/media/dst")
-DEFAULT_GRAND_PRIX = (
-    "Australia", "China", "Japan", "Bahrain", "Saudi Arabia", "Miami", "Emilia-Romagna",
-    "Monaco", "Barcelona-Catalunya", "Spain Barcelona", "Spain", "Canada", "Austria", "Great Britain", "Belgium",
-    "Hungary", "Netherlands", "Italy", "Monza", "Azerbaijan", "Singapore",
-    "United States", "Mexico", "São Paulo", "Las Vegas", "Qatar", "Abu Dhabi",
-)
-# Aliases resolve only to names enabled in config.grand_prix.
-GRAND_PRIX_ALIASES = {
-    "Australia": ("Melbourne", "Albert Park", "Australia Melbourne", "Australian"),
-    "China": ("Shanghai", "China Shanghai", "Chinese"),
-    "Japan": ("Suzuka", "Japan Suzuka", "Japanese"),
-    "Bahrain": ("Sakhir", "Bahrain Sakhir"),
-    "Saudi Arabia": ("Saudi", "Jeddah", "Saudi Jeddah", "Saudi Arabia Jeddah", "Saudi Arabian"),
-    "Miami": ("USA Miami", "United States Miami"),
-    "Emilia-Romagna": ("Imola", "Emilia Romagna Imola"),
-    "Monaco": ("Monte Carlo",),
-    "Barcelona-Catalunya": ("Barcelona", "Catalunya", "Catalonia"),
-    "Spain": ("Madrid", "Spain Madrid", "Madring", "Spanish"),
-    "Canada": ("Montreal", "Montréal", "Canada Montreal", "Gilles Villeneuve", "Canadian"),
-    "Austria": ("Spielberg", "Red Bull Ring", "Austria Spielberg", "Austrian"),
-    "Great Britain": ("UK", "GB", "Britain", "British", "United Kingdom", "Silverstone", "UK Silverstone"),
-    "Belgium": ("Spa", "Spa Francorchamps", "Belgium Spa", "Belgian"),
-    "Hungary": ("Budapest", "Hungaroring", "Hungary Budapest", "Hungarian"),
-    "Netherlands": ("Holland", "Dutch", "Zandvoort", "Netherlands Zandvoort"),
-    "Italy": ("Italy Monza", "Italian"),
-    "Azerbaijan": ("Baku", "Azerbaijan Baku"),
-    "Singapore": ("Marina Bay", "Singapore Marina Bay"),
-    "United States": ("USA COTA", "USA", "COTA", "Austin", "USA Austin",
-                      "United States Austin", "United States COTA", "Circuit of the Americas"),
-    "Mexico": ("Mexico City", "Hermanos Rodriguez", "Mexican"),
-    "São Paulo": ("Sao Paulo", "Brazil", "Brazilian", "Interlagos", "Brazil Sao Paulo"),
-    "Las Vegas": ("Vegas", "USA Las Vegas", "United States Las Vegas", "Las Vegas Strip"),
-    "Qatar": ("Lusail", "Losail", "Qatar Lusail", "Qatar Losail"),
-    "Abu Dhabi": ("Yas Marina", "UAE", "United Arab Emirates", "Abu Dhabi Yas Marina"),
-}
-DEFAULT_EVENTS = (
-    ("Post-Qualifying Show", "Post-Qualifying-Show"),
-    ("Post Qualifying Show", "Post-Qualifying-Show"),
-    ("Post-Race Show", "Post-Race-Show"),
-    ("Post Race Show", "Post-Race-Show"),
-    ("Pre-Race Show", "Pre-Race-Show"),
-    ("Pre Race Show", "Pre-Race-Show"),
-    ("Pre-Qualifying Show", "Pre-Qualifying-Show"),
-    ("Post-Sprint Show", "Post-Sprint-Show"),
-    ("Pre-Sprint Show", "Pre-Sprint-Show"),
-    ("Paddock Uncut", "Paddock-Uncut"),
-    ("Drivers Press Conference", "Drivers-Press-Conference"),
-    ("Weekend Warm-Up", "Weekend-Warm-Up"),
-    ("Sprint Qualifying", "Sprint-Qualifying"),
-    ("Sprint Shootout", "Sprint-Shootout"),
-    ("Practice 1", "Practice-1"),
-    ("Practice 2", "Practice-2"),
-    ("Practice 3", "Practice-3"),
-    ("FP1", "Practice-1"),
-    ("FP2", "Practice-2"),
-    ("FP3", "Practice-3"),
-    ("Qualification", "Qualify"),
-    ("Qualifying", "Qualify"),
-    ("Practice", "Practice"),
-    ("Sprint", "Sprint"),
-    ("Quali", "Qualify"),
-    ("Qualify", "Qualify"),
-    ("Race", "Race"),
-)
+DEFAULTS_DIR = Path(__file__).with_name("defaults")
+
+
+def default_grand_prix() -> tuple[str, ...]:
+    with (DEFAULTS_DIR / "grand_prix.json").open(encoding="utf-8") as file:
+        names = json.load(file)
+    validate_grand_prix(names)
+    return tuple(names)
+
+
+def default_events() -> tuple[tuple[str, str], ...]:
+    with (DEFAULTS_DIR / "events.json").open(encoding="utf-8") as file:
+        events = json.load(file)
+    validate_events(events)
+    return tuple(events.items())
+
+
+def validate_grand_prix(names: object) -> None:
+    if (not isinstance(names, (list, tuple)) or not names
+            or any(not isinstance(name, str) or not name.strip() for name in names)):
+        raise ValueError("formula1 grand_prix must be a nonempty list of names")
+    if any(re.search(r"[/\\.]", name) for name in names):
+        raise ValueError("formula1 output names cannot contain path separators or dots")
+
+
+def validate_events(events: object) -> None:
+    if (not isinstance(events, dict) or not events
+            or any(not isinstance(alias, str) or not alias.strip()
+                   or not isinstance(name, str) or not name.strip()
+                   for alias, name in events.items())):
+        raise ValueError("formula1 events must map aliases to names")
+    if any(re.search(r"[/\\.]", name) for name in events.values()):
+        raise ValueError("formula1 output names cannot contain path separators or dots")
+
+
 F1_PREFIX = re.compile(r"^(?:Formula1[.\s_-]+)+(20\d{2})[.\s_-]+Round[.\s_-]*(\d+)[.\s_-]+(.+)$", re.I)
 SEPARATOR = r"[.\s_-]+"
 
@@ -102,10 +73,12 @@ class Rule:
 class Config:
     extensions: frozenset[str]
     rules: tuple[Rule, ...]
-    grand_prix: tuple[str, ...] = DEFAULT_GRAND_PRIX
-    events: tuple[tuple[str, str], ...] = DEFAULT_EVENTS
+    grand_prix: tuple[str, ...] = field(default_factory=default_grand_prix)
+    events: tuple[tuple[str, str], ...] = field(default_factory=default_events)
     posters: dict = field(default_factory=dict)
     metadata: dict = field(default_factory=dict)
+    grand_prix_aliases: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    config_path: Path | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass
@@ -158,7 +131,7 @@ def relative_path(value: str, label: str) -> Path:
 def load_config(path: Path) -> Config:
     with path.open(encoding="utf-8") as file:
         raw = json.load(file)
-    return parse_config(raw)
+    return replace(parse_config(raw), config_path=path.resolve())
 
 
 
@@ -194,18 +167,21 @@ def parse_config(raw: object) -> Config:
     naming = raw.get("formula1", {})
     if not isinstance(naming, dict):
         raise ValueError("formula1 must be a JSON object")
-    grand_prix = naming.get("grand_prix", DEFAULT_GRAND_PRIX)
-    events = naming.get("events", dict(DEFAULT_EVENTS))
-    if (not isinstance(grand_prix, (list, tuple)) or not grand_prix
-            or any(not isinstance(name, str) or not name.strip() for name in grand_prix)):
-        raise ValueError("formula1 grand_prix must be a nonempty list of names")
-    if (not isinstance(events, dict) or not events
-            or any(not isinstance(alias, str) or not alias.strip()
-                   or not isinstance(name, str) or not name.strip()
-                   for alias, name in events.items())):
-        raise ValueError("formula1 events must map aliases to names")
-    if any(re.search(r"[/\\.]", name) for name in (*grand_prix, *events.values())):
-        raise ValueError("formula1 output names cannot contain path separators or dots")
+    grand_prix = naming["grand_prix"] if "grand_prix" in naming else default_grand_prix()
+    events = naming["events"] if "events" in naming else dict(default_events())
+    validate_grand_prix(grand_prix)
+    validate_events(events)
+    gp_aliases = naming.get("grand_prix_aliases", {})
+    if (not isinstance(gp_aliases, dict)
+            or any(not isinstance(gp, str) or not gp.strip()
+                   or re.search(r"[/\\.]", gp)
+                   or not isinstance(aliases, (list, tuple))
+                   or any(not isinstance(alias, str) or not alias.strip()
+                          or re.search(r"[/\\]", alias)
+                          or not any(re.split(r"[.\s_-]+", alias.strip()))
+                          for alias in aliases)
+                   for gp, aliases in gp_aliases.items())):
+        raise ValueError("formula1 grand_prix_aliases must map GP names to lists of nonempty aliases without path separators")
     posters = raw.get("posters", {})
     if not isinstance(posters, dict) or not isinstance(posters.get("enabled", True), bool):
         raise ValueError("posters must be an object with a boolean enabled flag")
@@ -224,6 +200,7 @@ def parse_config(raw: object) -> Config:
     return Config(
         frozenset(extension.casefold() for extension in extensions), tuple(rules),
         tuple(grand_prix), tuple(events.items()), posters, metadata,
+        {gp: tuple(aliases) for gp, aliases in gp_aliases.items()},
     )
 
 
@@ -246,10 +223,10 @@ def normalized_f1_name(filename: str, config: Config) -> tuple[F1Name | None, st
     if not 1 <= int(round_number) <= 26:
         return None, "Formula 1 round must be between 01 and 26"
     # Match the longest name across all GPs so USA Miami wins over USA.
-    # Configured names take priority over built-in aliases of the same length.
+    # Configured names take priority over aliases of the same length.
     candidates = [(gp, gp) for gp in config.grand_prix]
     candidates.extend((alias, gp) for gp in config.grand_prix
-                      for alias in GRAND_PRIX_ALIASES.get(gp, ()))
+                      for alias in config.grand_prix_aliases.get(gp, ()))
     for name, gp in sorted(candidates, key=lambda item: len(item[0]), reverse=True):
         gp_match = re.match(rf"^{_words_pattern(name)}{SEPARATOR}(.+)$", tail, re.I)
         if gp_match is None:
@@ -608,6 +585,17 @@ class LinkSync:
         result = ScanResult()
         self.prepared_nfos = set()
         self.last_error = None
+        if self.config.config_path is not None:
+            try:
+                updated = load_config(self.config.config_path)
+                naming = (updated.grand_prix, updated.events, updated.grand_prix_aliases)
+                if naming != (self.config.grand_prix, self.config.events, self.config.grand_prix_aliases):
+                    self.config = replace(self.config, grand_prix=updated.grand_prix,
+                                          events=updated.events, grand_prix_aliases=updated.grand_prix_aliases)
+                    LOG.info("Reloaded Formula 1 naming configuration from %s", self.config.config_path)
+            except (OSError, ValueError) as error:
+                self.last_error = f"Cannot reload Formula 1 naming configuration; keeping previous configuration: {error}"
+                LOG.warning("%s", self.last_error)
         current: dict[Path, tuple[tuple[int, int, int, int], float]] = {}
         if pending_only:
             current.update(self.previous)

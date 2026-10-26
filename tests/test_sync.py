@@ -7,7 +7,7 @@ from pathlib import Path
 from dataclasses import replace
 from unittest.mock import patch
 
-from sync import Config, LinkSync, Rule, load_config, load_directories, normalized_f1_name
+from sync import Config, LinkSync, Rule, load_config, load_directories, normalized_f1_name, parse_config
 
 
 class LinkSyncTests(unittest.TestCase):
@@ -230,7 +230,9 @@ class Formula1NamingTests(unittest.TestCase):
         self.destination = self.root / "destination"
         self.source.mkdir()
         (self.destination / "Season 2026").mkdir(parents=True)
-        self.config = Config(frozenset({".mkv"}), (Rule("2026", Path("Season 2026")),))
+        defaults = load_config(Path(__file__).resolve().parents[1] / "config.json")
+        self.config = Config(frozenset({".mkv"}), (Rule("2026", Path("Season 2026")),),
+                             grand_prix_aliases=defaults.grand_prix_aliases)
         self.now = 0.0
 
     def sync(self):
@@ -331,6 +333,120 @@ class Formula1NamingTests(unittest.TestCase):
         title, reason = normalized_f1_name("Formula1.2026.Round18.USA.Miami.Race.mkv", self.config)
         self.assertIsNone(reason)
         self.assertEqual(title.grand_prix, "Miami")
+
+    def test_gp_and_event_defaults_reload_and_invalid_edits_preserve_naming(self):
+        defaults = self.root / "defaults"
+        defaults.mkdir()
+        gp_path = defaults / "grand_prix.json"
+        events_path = defaults / "events.json"
+        gp_path.write_text(json.dumps(["Old Track"]))
+        events_path.write_text(json.dumps({"Race": "Race"}))
+        config_path = self.root / "config.json"
+        raw = {"rules": [{"contains": "2026", "destination": "."}]}
+        config_path.write_text(json.dumps(raw))
+        with patch("sync.DEFAULTS_DIR", defaults):
+            config = load_config(config_path)
+            self.assertEqual(config.grand_prix, ("Old Track",))
+            self.assertEqual(Config(frozenset({".mkv"}), ()).events, (("Race", "Race"),))
+            sync = LinkSync(self.destination, self.source, config, clock=lambda: self.now,
+                            registry_path=self.root / ".foldersync-links.json")
+            source = self.make_source("Formula1.2026.Round09.Custom.Track.Timed.Session.mkv")
+            self.assertEqual(sync.scan_once().pending, 1)
+            gp_path.write_text(json.dumps(["Custom Track"]))
+            events_path.write_text(json.dumps({"Timed Session": "Time Trial"}))
+            self.now += 120
+            self.assertEqual(sync.scan_once(pending_only=True).linked, 1)
+            target = self.destination / "Season 2609" / "S2609E01 - Custom Track Time Trial.mkv"
+            self.assertTrue(target.samefile(source))
+            self.assertTrue(target.with_suffix(".nfo").is_file())
+            for path, invalid in ((gp_path, []), (events_path, {"Timed Session": "../Bad"})):
+                with self.subTest(path=path):
+                    previous = path.read_text()
+                    path.write_text(json.dumps(invalid))
+                    with self.assertLogs("folder_sync", level="WARNING"):
+                        self.assertEqual(sync.scan_once().already_linked, 1)
+                    self.assertIn("keeping previous configuration", sync.last_error)
+                    self.assertEqual(sync.config.grand_prix, ("Custom Track",))
+                    self.assertEqual(sync.config.events, (("Timed Session", "Time Trial"),))
+                    path.write_text(previous)
+            # Explicit overrides take priority, including during live reload.
+            raw["formula1"] = {"grand_prix": ["Override Track"], "events": {"Timed": "Timed"}}
+            config_path.write_text(json.dumps(raw))
+            sync.scan_once(pending_only=True)
+            self.assertIsNone(sync.last_error)
+            title, reason = normalized_f1_name("Formula1.2026.Round09.Override.Track.Timed.mkv", sync.config)
+            self.assertIsNone(reason)
+            self.assertEqual(title.episode_name(1), "S2609E01 - Override Track Timed.mkv")
+
+    def test_explicit_gp_and_events_do_not_require_default_files(self):
+        raw = {"rules": [{"contains": "2026", "destination": "."}],
+               "formula1": {"grand_prix": ["Custom Track"], "events": {"Timed": "Timed"}}}
+        with patch("sync.DEFAULTS_DIR", self.root / "missing-defaults"):
+            config = parse_config(raw)
+        title, reason = normalized_f1_name("Formula1.2026.Round09.Custom.Track.Timed.mkv", config)
+        self.assertIsNone(reason)
+        self.assertEqual(title.grand_prix, "Custom Track")
+        for key, invalid in (("grand_prix", []), ("grand_prix", ["../Track"]),
+                             ("events", {}), ("events", {"Timed": "../Timed"})):
+            with self.subTest(key=key, invalid=invalid):
+                with self.assertRaises(ValueError):
+                    parse_config({**raw, "formula1": {**raw["formula1"], key: invalid}})
+
+    def test_alias_configuration_validation_and_empty_defaults(self):
+        raw = {"rules": [{"contains": "2026", "destination": "."}]}
+        self.assertEqual(parse_config(raw).grand_prix_aliases, {})
+        for aliases in (None, [], "UK", {"Great Britain": "UK"},
+                        {"Great Britain": [None]}, {"Great Britain": [""]},
+                        {"Great Britain": ["._-"]}, {"Great Britain": ["../UK"]},
+                        {"Great Britain": ["UK\\Silverstone"]}, {"../GP": ["UK"]}):
+            with self.subTest(aliases=aliases):
+                with self.assertRaisesRegex(ValueError, "grand_prix_aliases"):
+                    parse_config({**raw, "formula1": {"grand_prix_aliases": aliases}})
+        for aliases in ({}, {"Great Britain": []}):
+            config = parse_config({**raw, "formula1": {"grand_prix_aliases": aliases}})
+            self.assertIsNone(normalized_f1_name("Formula1.2026.Round09.UK.Race.mkv", config)[0])
+        config = parse_config({**raw, "formula1": {"grand_prix_aliases": {
+            "Great Britain": ["My.UK.Track"], "Disabled GP": ["Disabled"]}}})
+        title, reason = normalized_f1_name("Formula1.2026.Round09.My.UK.Track.Race.mkv", config)
+        self.assertIsNone(reason)
+        self.assertEqual(title.grand_prix, "Great Britain")
+        self.assertIsNone(normalized_f1_name("Formula1.2026.Round09.Disabled.Race.mkv", config)[0])
+
+    def test_alias_edits_reload_before_pending_scan_without_restarting(self):
+        config_path = self.root / "config.json"
+        raw = {"rules": [{"contains": "2026", "destination": "."}],
+               "formula1": {"grand_prix_aliases": {"Great Britain": ["UK"]}}}
+        config_path.write_text(json.dumps(raw))
+        sync = LinkSync(self.destination, self.source, load_config(config_path),
+                        clock=lambda: self.now, registry_path=self.root / ".foldersync-links.json")
+        source = self.make_source("Formula1.2026.Round09.New.Track.Race.mkv")
+        self.assertEqual(sync.scan_once().pending, 1)
+        raw["formula1"]["grand_prix_aliases"]["Great Britain"].append("New Track")
+        config_path.write_text(json.dumps(raw))
+        self.now += 120
+        result = sync.scan_once(pending_only=True)
+        self.assertEqual(result.linked, 1)
+        self.assertEqual(result.nfo_unparsed, 0)
+        target = self.destination / "Season 2609" / "S2609E01 - Great Britain Race.mkv"
+        self.assertTrue(target.samefile(source))
+        self.assertTrue(target.with_suffix(".nfo").is_file())
+        for invalid in ('{', json.dumps({**raw, "formula1": {"grand_prix_aliases": []}}), None):
+            with self.subTest(invalid=invalid):
+                if invalid is None:
+                    config_path.unlink()
+                else:
+                    config_path.write_text(invalid)
+                with self.assertLogs("folder_sync", level="WARNING"):
+                    self.assertEqual(sync.scan_once().already_linked, 1)
+                self.assertIn("keeping previous configuration", sync.last_error)
+                self.assertIn("New Track", sync.config.grand_prix_aliases["Great Britain"])
+        raw["formula1"]["grand_prix_aliases"] = {}
+        config_path.write_text(json.dumps(raw))
+        # No pending files: reloading still takes effect before the next full scan.
+        sync.scan_once(pending_only=True)
+        self.assertEqual(sync.config.grand_prix_aliases, {})
+        self.assertIsNone(sync.last_error)
+        self.assertIsNone(normalized_f1_name(source.name, sync.config)[0])
 
     def test_saved_usa_cota_links_are_normalized_and_get_nfos(self):
         config = load_config(Path(__file__).resolve().parents[1] / "config.json")
